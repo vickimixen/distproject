@@ -32,6 +32,19 @@
 	text :: string()
 }).
 
+% To user the chat.
+%% Chat1Pid ! {join, "user"}
+%% 
+%% Chat1Pid ! {send, "user", "Hi chat."}
+%% --> "Print messages"
+%% 
+%% Chat1Pid ! {leave, "user"}
+
+
+% ListChannels
+% --> Call ring
+% --> Fetch Pids
+
 % A node is a Channel.
 -record(node,{
   key :: pid(),
@@ -45,8 +58,7 @@
   self :: #node{},
   successor :: #node{},
   predecessor = undefined :: undefined | #node{},
-  predecessor_monitor :: reference(),
-  fingers = [] :: [{pos_integer(),#node{}}]
+  predecessor_monitor :: reference()
 }).
 
 
@@ -168,7 +180,7 @@ loop(S) ->
 -spec stabilise(#node{},#node{}) -> no_return().
 stabilise(Self,Successor) ->
   timer:sleep(?STABILIZE_INTERVAL),
-  io:format("stabilize with ~s. \n",[format_node(Successor)]),
+  io:format("Self: ~s, stabilize with ~s. \n",[format_node(Self), format_node(Successor)]),
   Successor#node.pid ! { get_predecessor, self() },
   NewSuccessor = receive
     { predecessor_of, Successor, undefined } -> Successor;
@@ -180,8 +192,8 @@ stabilise(Self,Successor) ->
         _ ->
           Successor
       end
-  end,  
-  io:format("notify ~s. \n",[format_node(NewSuccessor)]),
+  end,
+  io:format("Self: ~s, notify ~s. \n",[format_node(Self), format_node(NewSuccessor)]),
   NewSuccessor#node.pid ! { notify, Self },
   stabilise(Self,NewSuccessor).
 
