@@ -1,7 +1,7 @@
 -module(chat).
 
 %-export([start/0,stop/0,put/2,get/1,remove/1,size/0,create_slaves/1,remove_slaves/1, exit_master/0]).
--export([start/0,start/1,hash/1,is_key/1,locate_successor/2,format_node/1,format_key/1]).
+-export([start/0,start/2,hash/1,is_key/1,locate_successor/2,format_node/1,format_key/1, master_start/0]).
 -export_type([users/0, messages/0]).
 -export_opaque([key/0, users/0, messages/0, channels/0]).
 
@@ -20,7 +20,7 @@
 -define(KEY_MAX, 1 bsl ?KEY_LENGTH - 1).
 
 -type(key() :: non_neg_integer()).
--opaque(users() :: map()).
+-opaque(users() :: list()).
 -opaque(messages() :: map()).
 
 -record(user, {
@@ -47,9 +47,10 @@
 
 % A node is a Channel.
 -record(node,{
+  name = [] :: string(),
   key :: pid(),
   pid :: key(),
-  users :: users(),
+  users = [] :: users(),
   messages :: messages()
 }).
 
@@ -81,27 +82,35 @@ hash(T) -> erlang:phash2(T,?KEY_MAX).
 format_node(N) -> 
   io_lib:format("("++?KEY_FORMAT++" ~p)",[N#node.key,N#node.pid]).
 
+- spec master_start() -> pid().
+master_start() ->
+  Node = start(),
+  _Master = spawn(fun() ->
+    master(Node)
+  end).
+
+
 %% @doc Creates a new ring
 -spec start() -> #node{}.
 start() ->
   P = spawn(fun() ->
-    Self = #node{ key = hash(self()) , pid = self() },
+    Self = #node{ key = hash(self()) , pid = self(), name = "startNode" },
     spawn_link( fun() -> stabilise(Self,Self) end),
     loop(#state{ self = Self, successor = Self })
   end),
-  #node{ key = hash(P) , pid = P }.
+  #node{ key = hash(P) , pid = P, name = "startNode" }.
 
 %% @doc Joins an existing ring
--spec start(#node{}) -> #node{}.
-start(N) ->
+-spec start(#node{}, string()) -> #node{}.
+start(N, Name) ->
   P = spawn(fun() ->
     Succ = locate_successor(hash(self()), N),
-    Self = #node{ key = hash(self()) , pid = self() },
+    Self = #node{ key = hash(self()) , pid = self(), name = Name },
     % NOTE: collisions for hash(self()) are not a problem for the protocol.
     spawn_link( fun() -> stabilise(Self,Succ) end),
     loop(#state{ self = Self, successor = Succ })
   end),
-  #node{ key = hash(P) , pid = P }.
+  #node{ key = hash(P) , pid = P, name = Name }.
 
 %% @doc Locate the successor node to Key.
 -spec locate_successor(key(),#node{}) -> #node{}.
@@ -113,6 +122,53 @@ locate_successor(Key, N) ->
       N#node.pid ! { locate_successor, Key, self() },
       receive
         { successor_of, Key, S } -> S
+      end
+  end.
+
+%-spec master([#node{}]) -> no_return().
+master(Channel) ->
+  receive
+    {create_channel, ReplyTo, Name} ->
+      NewChannel = start(Channel, Name),
+      ReplyTo ! NewChannel#node.pid,
+      master(Channel);
+    {join_channel, ReplyTo, Username, Name} ->
+      JoinedChannel = look_up(Channel, Name, Channel),
+      JoinedChannel#node.pid ! {user_joined, Username},
+      ReplyTo ! JoinedChannel,
+      master(Channel);
+    {list_channels, ReplyTo} -> 
+      Channels = list_channels(Channel,maps:new()),
+      io:format("~p ~n",[Channels]),
+      ReplyTo ! {list_channels, Channels},
+      master(Channel)
+  end.
+
+list_channels(Node,Channels) ->
+  io:format("Node: ~p~n",[Node#node.name]),
+  %Succ = locate_successor(hash(Node#node.key), Node),
+  Node#node.pid ! { locate_successor, Node#node.key, self()},
+  receive
+    {successor_of, _Key, Successor } ->
+      Succ = Successor
+  end,
+  io:format("Channels :~p , Succ Name: ~p ~n",[Channels,Succ#node.name]),
+  case maps:is_key(Succ#node.name, Channels) of 
+    true -> Channels;
+    _ -> 
+      NewChannels = maps:put(Succ#node.name,Succ#node.name,Channels),
+      list_channels(Succ, NewChannels)
+  end.
+
+look_up(Node, Name, Startnode) ->
+  case string:equal(Name, Node#node.name) of 
+    true -> 
+      Node;
+    _ ->
+      Succ = locate_successor(Node#node.key, Node),
+      case Succ#node.pid == Startnode#node.pid of 
+        true -> undefined;
+        _ -> look_up(Succ, Name, Startnode)
       end
   end.
 
@@ -130,11 +186,11 @@ loop(S) ->
       % request to locate the successor of Key--see Locate_Successor(Key)
       case is_handled_by_successor(Key, S) of
         true  -> 
-          io:format("replying ~s to locate request by ~p for ~s. \n",[format_node(S#state.successor),ReplyTo,format_key(Key)]),
+          %io:format("replying ~s to locate request by ~p for ~s. \n",[format_node(S#state.successor),ReplyTo,format_key(Key)]),
           ReplyTo ! {successor_of, Key, S#state.successor };
         _ -> 
           % forward the request to the successor of this node
-          io:format("forwarding locate request by ~p for ~s to ~s. \n",[ReplyTo,format_key(Key),format_node(S#state.successor)]),
+          %io:format("forwarding locate request by ~p for ~s to ~s. \n",[ReplyTo,format_key(Key),format_node(S#state.successor)]),
           S#state.successor#node.pid ! M
       end,
       loop(S);
@@ -142,7 +198,7 @@ loop(S) ->
       % Implements the Notify procedure of the Chord protocol.
       case S#state.predecessor of
         undefined -> 
-          io:format("predecessor = ~s. \n",[format_node(Pred)]),
+          io:format("Self = ~s, predecessor = ~s. \n",[format_node(S#state.self),format_node(Pred)]),
           loop(S#state{ 
             predecessor = Pred, 
             predecessor_monitor = erlang:monitor(process,Pred#node.pid)
@@ -150,7 +206,7 @@ loop(S) ->
         _ -> 
           case is_in_interval(Pred#node.key, S#state.predecessor#node.key, S#state.self#node.key) of
             true ->
-              io:format("predecessor = ~s. \n",[format_node(Pred)]),
+              io:format("Self = ~s, predecessor = ~s. \n",[format_node(S#state.self), format_node(Pred)]),
               erlang:demonitor(S#state.predecessor_monitor, [flush]),
               loop(S#state{ 
                 predecessor = Pred, 
@@ -168,8 +224,11 @@ loop(S) ->
       ReplyTo ! { predecessor_of, S#state.self, S#state.predecessor },
       loop(S);
     { set_successor, Succ } ->
-      io:format("successor = ~s. \n",[format_node(Succ)]),
+      io:format("Self = ~s, successor = ~s. \n",[format_node(S#state.self),format_node(Succ)]),
       loop(S#state{successor = Succ});
+    {user_joined, Username} -> 
+      user = #user{name = Username},
+      loop(S#state.self#node{ users = lists:append(S#state.self#node.users, user)});
     print_info ->
       % DEBUG
       io:format("NODE INFO~n  state: ~p~n~n  process info: ~p~n \n",[S, process_info(self())]),
