@@ -133,43 +133,54 @@ master(Channel) ->
       ReplyTo ! NewChannel#node.pid,
       master(Channel);
     {join_channel, ReplyTo, Username, Name} ->
-      JoinedChannel = look_up(Channel, Name, Channel),
-      JoinedChannel#node.pid ! {user_joined, Username},
-      ReplyTo ! JoinedChannel,
+      Channel#node.pid ! { get_name, self(), Channel},
+      Channels = list_channels(maps:new()),
+      JoinedChannel = look_up(Channels, Name),
+      case JoinedChannel == undefined of 
+        true -> ReplyTo ! {channel_joined, JoinedChannel};
+        _ ->
+          JoinedChannel#node.pid ! {user_joined, Username},
+          ReplyTo ! {channel_joined, JoinedChannel}
+      end,
       master(Channel);
     {list_channels, ReplyTo} -> 
-      Channels = list_channels(Channel,maps:new()),
+      Channel#node.pid ! { get_name, self(), Channel},
+      Channels = list_channels(maps:new()),
       io:format("~p ~n",[Channels]),
       ReplyTo ! {list_channels, Channels},
+      master(Channel);
+    {search_group, ReplyTo, GroupName} ->
+      Channel#node.pid ! { get_name, self(), Channel},
+      Channels = list_channels(maps:new()),
+      Node = look_up(Channels, GroupName),
+      io:format("~s ~n",[format_node(Node)]),
+      ReplyTo ! {group_found, Node, GroupName},
       master(Channel)
   end.
 
-list_channels(Node,Channels) ->
-  io:format("Node: ~p~n",[Node#node.name]),
-  %Succ = locate_successor(hash(Node#node.key), Node),
-  Node#node.pid ! { locate_successor, Node#node.key, self()},
+
+list_channels(Channels) ->
+  %io:format("Channels: ~p~n",[Channels]),
   receive
-    {successor_of, _Key, Successor } ->
-      Succ = Successor
-  end,
-  io:format("Channels :~p , Succ Name: ~p ~n",[Channels,Succ#node.name]),
-  case maps:is_key(Succ#node.name, Channels) of 
-    true -> Channels;
-    _ -> 
-      NewChannels = maps:put(Succ#node.name,Succ#node.name,Channels),
-      list_channels(Succ, NewChannels)
+    {return_name, Name, Node} ->
+      case maps:is_key(Name, Channels) of 
+        true -> Channels;
+        _ -> 
+          NewChannels = maps:put(Name,Node,Channels),
+          list_channels(NewChannels)
+        end;
+    {done} ->
+      Channels
   end.
 
-look_up(Node, Name, Startnode) ->
-  case string:equal(Name, Node#node.name) of 
-    true -> 
-      Node;
-    _ ->
-      Succ = locate_successor(Node#node.key, Node),
-      case Succ#node.pid == Startnode#node.pid of 
-        true -> undefined;
-        _ -> look_up(Succ, Name, Startnode)
-      end
+
+look_up(ChannelList, GroupName) ->
+  %io:format("Channels: ~p~n",[Channels]),
+  case maps:is_key(GroupName, ChannelList) of 
+      true -> 
+        Node = maps:get(GroupName,ChannelList);
+      _ -> 
+        undefined
   end.
 
 %% Event loop of the chord node.
@@ -226,6 +237,19 @@ loop(S) ->
     { set_successor, Succ } ->
       io:format("Self = ~s, successor = ~s. \n",[format_node(S#state.self),format_node(Succ)]),
       loop(S#state{successor = Succ});
+    { get_name, ReplyTo, Startnode } ->
+      %io:format("Startnode id: ~p ~n",[Startnode#node.pid]),
+      %io:format("Succ id: ~p ~n",[S#state.successor#node.pid]),
+      case Startnode#node.pid == S#state.successor#node.pid of 
+        true -> 
+          ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
+          ReplyTo ! {done},
+          loop(S); 
+        _ -> 
+          ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
+          S#state.successor#node.pid ! {get_name, ReplyTo, Startnode},
+          loop(S)
+      end;
     {user_joined, Username} -> 
       user = #user{name = Username},
       loop(S#state.self#node{ users = lists:append(S#state.self#node.users, user)});
