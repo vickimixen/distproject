@@ -129,8 +129,9 @@ locate_successor(Key, N) ->
 master(Channel) ->
   receive
     {create_channel, ReplyTo, Name} ->
-      NewChannel = start(Channel, Name),
-      ReplyTo ! NewChannel#node.pid,
+      _NewChannel = start(Channel, Name),
+      %ReplyTo ! NewChannel#node.pid,
+      ReplyTo ! {group_created, Name},
       master(Channel);
     {join_channel, ReplyTo, Username, Name} ->
       Channel#node.pid ! { get_name, self(), Channel},
@@ -146,14 +147,14 @@ master(Channel) ->
     {list_channels, ReplyTo} -> 
       Channel#node.pid ! { get_name, self(), Channel},
       Channels = list_channels(maps:new()),
-      io:format("~p ~n",[Channels]),
+      %io:format("~p ~n",[Channels]),
       ReplyTo ! {list_channels, Channels},
       master(Channel);
     {search_group, ReplyTo, GroupName} ->
       Channel#node.pid ! { get_name, self(), Channel},
       Channels = list_channels(maps:new()),
       Node = look_up(Channels, GroupName),
-      io:format("~s ~n",[format_node(Node)]),
+      %io:format("~s ~n",[format_node(Node)]),
       ReplyTo ! {group_found, Node, GroupName},
       master(Channel)
   end.
@@ -209,7 +210,7 @@ loop(S) ->
       % Implements the Notify procedure of the Chord protocol.
       case S#state.predecessor of
         undefined -> 
-          io:format("Self = ~s, predecessor = ~s. \n",[format_node(S#state.self),format_node(Pred)]),
+          %io:format("Self = ~s, predecessor = ~s. \n",[format_node(S#state.self),format_node(Pred)]),
           loop(S#state{ 
             predecessor = Pred, 
             predecessor_monitor = erlang:monitor(process,Pred#node.pid)
@@ -217,7 +218,7 @@ loop(S) ->
         _ -> 
           case is_in_interval(Pred#node.key, S#state.predecessor#node.key, S#state.self#node.key) of
             true ->
-              io:format("Self = ~s, predecessor = ~s. \n",[format_node(S#state.self), format_node(Pred)]),
+              %io:format("Self = ~s, predecessor = ~s. \n",[format_node(S#state.self), format_node(Pred)]),
               erlang:demonitor(S#state.predecessor_monitor, [flush]),
               loop(S#state{ 
                 predecessor = Pred, 
@@ -229,13 +230,13 @@ loop(S) ->
       end;
     {'DOWN', Ref, _Type, _Object, _Info} when Ref == S#state.predecessor_monitor ->
       % the predecessor is believed to have failed and removed
-      io:format("predecessor = undefined. \n",[]),
+      %io:format("predecessor = undefined. \n",[]),
       loop(S#state{ predecessor = undefined, predecessor_monitor = undefined });
     { get_predecessor, ReplyTo } ->
       ReplyTo ! { predecessor_of, S#state.self, S#state.predecessor },
       loop(S);
     { set_successor, Succ } ->
-      io:format("Self = ~s, successor = ~s. \n",[format_node(S#state.self),format_node(Succ)]),
+      %io:format("Self = ~s, successor = ~s. \n",[format_node(S#state.self),format_node(Succ)]),
       loop(S#state{successor = Succ});
     { get_name, ReplyTo, Startnode } ->
       %io:format("Startnode id: ~p ~n",[Startnode#node.pid]),
@@ -255,7 +256,7 @@ loop(S) ->
       loop(S#state.self#node{ users = lists:append(S#state.self#node.users, user)});
     print_info ->
       % DEBUG
-      io:format("NODE INFO~n  state: ~p~n~n  process info: ~p~n \n",[S, process_info(self())]),
+      %io:format("NODE INFO~n  state: ~p~n~n  process info: ~p~n \n",[S, process_info(self())]),
       loop(S)
   end.
 
@@ -263,7 +264,7 @@ loop(S) ->
 -spec stabilise(#node{},#node{}) -> no_return().
 stabilise(Self,Successor) ->
   timer:sleep(?STABILIZE_INTERVAL),
-  io:format("Self: ~s, stabilize with ~s. \n",[format_node(Self), format_node(Successor)]),
+  %io:format("Self: ~s, stabilize with ~s. \n",[format_node(Self), format_node(Successor)]),
   Successor#node.pid ! { get_predecessor, self() },
   NewSuccessor = receive
     { predecessor_of, Successor, undefined } -> Successor;
@@ -276,7 +277,7 @@ stabilise(Self,Successor) ->
           Successor
       end
   end,
-  io:format("Self: ~s, notify ~s. \n",[format_node(Self), format_node(NewSuccessor)]),
+  %io:format("Self: ~s, notify ~s. \n",[format_node(Self), format_node(NewSuccessor)]),
   NewSuccessor#node.pid ! { notify, Self },
   stabilise(Self,NewSuccessor).
 
