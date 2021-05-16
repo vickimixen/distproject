@@ -86,10 +86,10 @@ format_node(N) ->
 
 - spec master_start() -> pid().
 master_start() ->
-  Node = start(),
-  _Master = spawn(fun() ->
-    master(Node)
-  end).
+  Node = start().
+  %_Master = spawn(fun() ->
+  %  master(Node)
+  %end).
 
 
 %% @doc Creates a new ring
@@ -128,63 +128,63 @@ locate_successor(Key, N) ->
   end.
 
 %-spec master([#node{}]) -> no_return().
-master(Channel) ->
-  receive
-    {create_channel, ReplyTo, Name} ->
-      _NewChannel = start(Channel, Name),
+%master(Channel) ->
+%  receive
+    %{create_channel, ReplyTo, Name} ->
+    %  _NewChannel = start(Channel, Name),
       %ReplyTo ! NewChannel#node.pid,
-      ReplyTo ! {group_created, Name},
-      master(Channel);
-    {join_channel, ReplyTo, Username, Group} ->
-      Channel#node.pid ! { get_name, self(), Channel},
-      Channels = list_channels(maps:new()),
-      JoinedChannel = look_up(Channels, Group),
-      case JoinedChannel == undefined of
-        true -> ReplyTo ! {channel_joined, JoinedChannel};
-        _ ->
-          JoinedChannel#node.pid ! {user_joined, Username, ReplyTo},
-          ReplyTo ! {channel_joined, JoinedChannel}
-      end,
-      master(Channel);
-    {list_channels, ReplyTo} -> 
-      Channel#node.pid ! { get_name, self(), Channel},
-      Channels = list_channels(maps:new()),
+    %  ReplyTo ! {group_created, Name},
+    %  master(Channel);
+    %{join_channel, ReplyTo, Username, Group} ->
+    %  Channel#node.pid ! { get_name, self(), Channel},
+    %  Channels = list_channels(maps:new()),
+    %  JoinedChannel = look_up(Channels, Group),
+    %  case JoinedChannel == undefined of
+    %    true -> ReplyTo ! {channel_joined, JoinedChannel};
+    %    _ ->
+    %      JoinedChannel#node.pid ! {user_joined, Username, ReplyTo},
+    %      ReplyTo ! {channel_joined, JoinedChannel}
+    %  end,
+    %  master(Channel);
+    %{list_channels, ReplyTo} -> 
+    %  Channel#node.pid ! { get_name, self(), Channel},
+    %  Channels = list_channels(maps:new()),
       %io:format("~p ~n",[Channels]),
-      ReplyTo ! {list_channels, Channels},
-      master(Channel);
-    {search_group, ReplyTo, GroupName} ->
-      Channel#node.pid ! { get_name, self(), Channel},
-      Channels = list_channels(maps:new()),
-      Node = look_up(Channels, GroupName),
+    %  ReplyTo ! {list_channels, Channels},
+    %  master(Channel);
+    %{search_group, ReplyTo, GroupName} ->
+    %  Channel#node.pid ! { get_name, self(), Channel},
+    %  Channels = list_channels(maps:new()),
+    %  Node = look_up(Channels, GroupName),
       %io:format("~s ~n",[format_node(Node)]),
-      ReplyTo ! {group_found, Node, GroupName},
-      master(Channel)
-  end.
+    %  ReplyTo ! {group_found, Node, GroupName},
+    %  master(Channel)
+  %end.
 
 
-list_channels(Channels) ->
+%list_channels(Channels) ->
   %io:format("Channels: ~p~n",[Channels]),
-  receive
-    {return_name, Name, Node} ->
-      case maps:is_key(Name, Channels) of 
-        true -> Channels;
-        _ -> 
-          NewChannels = maps:put(Name,Node,Channels),
-          list_channels(NewChannels)
-        end;
-    {done} ->
-      Channels
-  end.
+%  receive
+%    {return_name, Name, Node} ->
+%      case maps:is_key(Name, Channels) of 
+%        true -> Channels;
+%        _ -> 
+%          NewChannels = maps:put(Name,Node,Channels),
+%          list_channels(NewChannels)
+%        end;
+%    {done} ->
+%      Channels
+%  end.
 
 
-look_up(ChannelList, GroupName) ->
+%look_up(ChannelList, GroupName) ->
   %io:format("Channels: ~p~n",[Channels]),
-  case maps:is_key(GroupName, ChannelList) of 
-      true -> 
-        Node = maps:get(GroupName,ChannelList);
-      _ -> 
-        undefined
-  end.
+%  case maps:is_key(GroupName, ChannelList) of 
+%      true -> 
+%        Node = maps:get(GroupName,ChannelList);
+%      _ -> 
+%        undefined
+%  end.
 
 %% Event loop of the chord node.
 -spec loop(#state{}) -> no_return().
