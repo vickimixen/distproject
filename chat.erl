@@ -1,9 +1,10 @@
 -module(chat).
 
 %-export([start/0,stop/0,put/2,get/1,remove/1,size/0,create_slaves/1,remove_slaves/1, exit_master/0]).
--export([start/0,start/2,hash/1,is_key/1,locate_successor/2,format_node/1,format_key/1, master_start/0]).
+% -export([start/0,start/2,hash/1,is_key/1,locate_successor/2,format_node/1,format_key/1, master_start/0]).
 -export_type([users/0, messages/0]).
 -export_opaque([key/0, users/0, messages/0, channels/0]).
+-compile(export_all).
 
 %%% CONFIG PARAMETERS %%%%%%%
 % number of bits in the keys
@@ -21,10 +22,11 @@
 
 -type(key() :: non_neg_integer()).
 -opaque(users() :: list()).
--opaque(messages() :: map()).
+-opaque(messages() :: list()).
 
 -record(user, {
-	name :: string()
+	name :: string(),
+  pid :: pid()
 }).
 
 -record(message, {
@@ -51,7 +53,7 @@
   key :: pid(),
   pid :: key(),
   users = [] :: users(),
-  messages :: messages()
+  messages = [] :: messages()
 }).
 
 %% internal state for the main event loop of a chord node.
@@ -133,14 +135,14 @@ master(Channel) ->
       %ReplyTo ! NewChannel#node.pid,
       ReplyTo ! {group_created, Name},
       master(Channel);
-    {join_channel, ReplyTo, Username, Name} ->
+    {join_channel, ReplyTo, Username, Group} ->
       Channel#node.pid ! { get_name, self(), Channel},
       Channels = list_channels(maps:new()),
-      JoinedChannel = look_up(Channels, Name),
-      case JoinedChannel == undefined of 
+      JoinedChannel = look_up(Channels, Group),
+      case JoinedChannel == undefined of
         true -> ReplyTo ! {channel_joined, JoinedChannel};
         _ ->
-          JoinedChannel#node.pid ! {user_joined, Username},
+          JoinedChannel#node.pid ! {user_joined, Username, ReplyTo},
           ReplyTo ! {channel_joined, JoinedChannel}
       end,
       master(Channel);
@@ -251,9 +253,18 @@ loop(S) ->
           S#state.successor#node.pid ! {get_name, ReplyTo, Startnode},
           loop(S)
       end;
-    {user_joined, Username} -> 
-      user = #user{name = Username},
-      loop(S#state.self#node{ users = lists:append(S#state.self#node.users, user)});
+    {user_joined, Username, Pid} ->
+      User = #user{name = Username, pid = Pid},
+      loop(S#state{self = S#state.self#node{users = lists:append(S#state.self#node.users, [User])}});
+    {user_message, User, Message} ->
+      Messages = S#state.self#node.messages,
+      MessageRecord = #message{user = User, text = Message},
+      NewMessages = lists:append(S#state.self#node.messages, [MessageRecord]),
+      % Send data to nodes
+      lists:foreach(fun(U) ->
+        U#user.pid ! {new_message, MessageRecord}
+      end, S#state.self#node.users),
+      loop(S#state{self = S#state.self#node{messages = NewMessages}});
     print_info ->
       % DEBUG
       %io:format("NODE INFO~n  state: ~p~n~n  process info: ~p~n \n",[S, process_info(self())]),

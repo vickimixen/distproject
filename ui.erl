@@ -1,12 +1,41 @@
 -module(ui).
--export([start/0]).
--import(chat,[master_start/0]).
+-export([start/0, start/1]).
+% -import(chat,[master_start/0]).
+-import_all(chat).
+
+-type(key() :: non_neg_integer()).
+-opaque(users() :: list()).
+-opaque(messages() :: list()).
+
+-record(user, {
+    name :: string(),
+    pid :: pid()
+}).
+
+-record(message, {
+    user :: user,
+    text :: string()
+}).
+
+% A node is a Channel.
+-record(node,{
+  name = [] :: string(),
+  key :: pid(),
+  pid :: key(),
+  users = [] :: users(),
+  messages = [] :: messages()
+}).
 
 -define(SLEEP_MIN,2000).
 
 start() ->
     io:format("Welcome to the forum!~n"),
     MasterPid = chat:master_start(),
+    io:format("Master: ~p~n", [MasterPid]),
+    loop(MasterPid).
+
+start(MasterPid) ->
+    io:format("Welcome to the forum!~n"),
     loop(MasterPid).
 
 loop(MasterPid) ->
@@ -15,37 +44,27 @@ loop(MasterPid) ->
     io:format("2: Search group ~n"),
     io:format("3: Search user ~n"),
     io:format("4: Create group ~n"),
-    Term = io:get_line("Chose number: "),
-    case string:equal(Term, "1\n") of
-        true -> channel_loop(MasterPid);
+    Term = io:get_line("Choose number: "),
+    case Term of
+        "1\n" -> channel_loop(MasterPid);
+        "2\n" -> group_search_loop(MasterPid);
+        "3\n" -> 
+            io:format("Not implemented yet ~n"),
+            loop(MasterPid);
+            %User = io:get_line("User to search for: ");
+            % Call to search_user, implement in chat
+        "4\n" ->
+            GroupName = io:get_line("Groupname for new group: "),
+            TrimGroup = string:trim(GroupName),
+            MasterPid ! {create_channel, self(), TrimGroup},
+            receive
+                {group_created, Name} ->
+                io:format("Group was created: ~p~n", [Name]),
+                loop(MasterPid)
+            end;
         _ -> 
-            case string:equal(Term, "2\n")  of
-                true -> 
-                    group_search_loop(MasterPid);
-                _ -> 
-                    case string:equal(Term, "3\n") of
-                        true -> 
-                            io:format("Not implemented yet ~n"),
-                            loop(MasterPid);
-                            %User = io:get_line("User to search for: ");
-                            % Call to search_user, implement in chat
-                        _ -> 
-                            case string:equal(Term, "4\n") of
-                                true -> 
-                                    GroupName = io:get_line("Groupname for new group: "),
-                                    TrimGroup = string:trim(GroupName),
-                                    MasterPid ! {create_channel, self(), TrimGroup},
-                                    receive
-                                        {group_created, Name} ->
-                                            io:format("Group was created: ~p~n", [Name]),
-                                            loop(MasterPid)
-                                    end;
-                                _ -> 
-                                    io:format("Not an option~n"),
-                                    loop(MasterPid)
-                            end
-                    end
-            end
+            io:format("Not an option~n"),
+            loop(MasterPid)
     end.
 
 group_search_loop(MasterPid) ->
@@ -56,23 +75,25 @@ group_search_loop(MasterPid) ->
         {group_found, undefined, _GroupName} ->
             io:format("Group not found"),
             group_search_loop(MasterPid);
-        {group_found, Node, GroupName} ->
-            group_found_loop(MasterPid, Node, GroupName)
+        {group_found, Node, Group} ->
+            group_found_loop(MasterPid, Node, Group)
     end.
 
-group_found_loop(MasterPid, Node, GroupName) ->
+group_found_loop(MasterPid, Node, Group) ->
     Answer = io:get_line("Group found, want to connect to it? (Yes/No) "),
     case string:equal(Answer, "Yes\n" ) of 
         true -> 
-            io:format("Connecting you to: ~p~n", [GroupName]),
-            chat_loop(Node, MasterPid);
+            Username = string:trim(io:get_line("Please choose a username: ")),
+            io:format("Connecting you to: ~p with the name: ~p~n", [Group, Username]),
+            MasterPid ! {join_channel, self(), Username, Group},
+            init_chat_loop(Node, MasterPid, Username);
         _ -> 
             case string:equal(Answer, "No\n") of 
                 true -> 
                     loop(MasterPid);
                 _ -> 
                     io:format("Option no avaliable"),
-                    group_found_loop(MasterPid, Node, GroupName)
+                    group_found_loop(MasterPid, Node, Group)
             end 
     end.
 
@@ -88,53 +109,59 @@ channel_loop(MasterPid) ->
                 _ ->
                     %io:format("~p~n", [Channels]),
                     maps:fold(fun(K, _V, ok) ->
-                                case string:equal(K, "startNode") of 
-                                    false ->
-		                                io:format("~p~n", [K]);
-                                    true -> ok
-                                end
-	                        end, ok, Channels)
+                        case string:equal(K, "startNode") of 
+                            false ->
+                                io:format("~p~n", [K]);
+                            true -> ok
+                        end
+                    end, ok, Channels)
                     %maps:foreach(fun(Key,_Value) ->
                     %    io:format("~p~n",[Key])
                     %end, Channels)
             end   
     end,
-    Term = io:get_line("Which one would you like to join? (Write back to return to start) "),
-    TrimTerm = string:trim(Term),
-    case string:equal(TrimTerm, "back") of 
+    Term = io:get_line("Which one would you like to join? (Write \"back\" to return to start) "),
+    Group = string:trim(Term),
+    case string:equal(Group, "back") of
         true -> 
             io:format("Going back to start~n"),
             loop(MasterPid);
         _ ->
-            io:format("Connecting you to: ~p~n", [TrimTerm]),
-            case maps:is_key(TrimTerm, Channels) of 
-                true -> chat_loop(maps:get(TrimTerm, Channels), MasterPid); % Get messages from channel node
-                _ -> 
+            Username = string:trim(io:get_line("Please choose a username: ")),
+            io:format("Connecting you to: ~p with the name: ~p~n", [Group, Username]),
+            case maps:is_key(Group, Channels) of
+                true ->
+                    MasterPid ! {join_channel, self(), Username, Group},
+                    init_chat_loop(maps:get(Group, Channels), MasterPid, Username); % Get messages from channel node
+                _ ->
                     io:format("Channels does not exits~n"),
                     channel_loop(MasterPid)
             end
     end.
 
-chat_loop(Node, MasterPid) -> % Implement messages right in chat
-    %lists:foreach(fun(N) ->
-    %                  io:format("~n~p said: ~p ~n",[self(),N])
-    %          end, Node#node.messages),
+init_chat_loop(Node, MasterPid, Username) -> % Implement messages right in chat
     io:format("Connected"),
-    P = spawn(fun() -> wait_mess() end),
-    _P1 = spawn(fun() -> other_person(P) end).
-    %write_mess(Node#node.messages).
+    lists:foreach(fun(U) ->
+        io:format("~n~p said: ~p ~n",[U#message.user#user.name, U#message.text])
+    end, Node#node.messages),
+    User = #user{name = Username, pid = self()},
+    io:format("Type \"quit\" to leave channel. ~n"),
+    P = spawn(fun() -> write_mess(Node, MasterPid, User) end),
+    wait_mess().
 
-write_mess(Messages)->
-    Mess = io:get_line(": "),
-    NewMessages = lists:append(Messages, [Mess]),
-    io:format("~n~p said: ~p ~n",[self(),Mess]),
-    write_mess(NewMessages).
-% Also needs to send message to the channel node
+write_mess(Node, MasterPid, User)->
+    Message = io:get_line(": "),
+    case string:equal(Message, "quit\n") of
+        true -> loop(MasterPid);
+        _ -> 
+            Node#node.pid ! {user_message, User, Message},
+            write_mess(Node, MasterPid, User)
+    end.
 
 wait_mess() ->
     receive
-        {message, Author, Message} -> 
-            io:format("~n~p said: ~p  ~n",[Author, Message]),
+        {new_message, MessageRecord} -> 
+            io:format("~n~p said: ~p ~n",[MessageRecord#message.user#user.name, MessageRecord#message.text]),
             wait_mess()
     end.
 
