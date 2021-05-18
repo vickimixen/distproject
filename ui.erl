@@ -165,6 +165,12 @@ write_mess(Node, MasterNode, User)->
     case string:equal(Message, "quit\n") of
         true -> loop(MasterNode);
         _ -> 
+            Clock = erlang:timestamp(),
+            M = #message{user = User,text = Message}, 
+            Node#node.pid ! {revise_ts, M, self(), erlang:unique_integer([monotonic]),Clock},
+            receive
+                {proposed_ts } -> io:format("pro")
+            end,
             Node#node.pid ! {user_message, User, Message},
             write_mess(Node, MasterNode, User)
     end.
