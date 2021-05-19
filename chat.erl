@@ -12,10 +12,12 @@
 % the format used to print keys
 -define(KEY_FORMAT, "~3..0B").
 % the delay between different runs of the Stabilise procedure
--define(STABILIZE_INTERVAL,1000).
+-define(STABILIZE_INTERVAL,1500).
 % the delay between different runs of the Fix_Fingers procedure
 %-define(FIX_FINGERS_INTERVAL,1000).
 %%% END OF CONFIG %%%%%%%%%%%
+
+-define(TIMEOUT,1000).
 
 % a shorthand used in the code, do not modfy
 -define(KEY_MAX, 1 bsl ?KEY_LENGTH - 1).
@@ -60,6 +62,7 @@
 -record(state,{
   self :: #node{},
   successor :: #node{},
+  successors = [] :: list(),
   predecessor = undefined :: undefined | #node{},
   predecessor_monitor :: reference()
 }).
@@ -97,7 +100,7 @@ master_start() ->
 start() ->
   P = spawn(fun() ->
     Self = #node{ key = hash(self()) , pid = self(), name = "startNode" },
-    spawn_link( fun() -> stabilise(Self,Self) end),
+    spawn_link( fun() -> stabilise(Self,Self,[Self]) end),
     loop(#state{ self = Self, successor = Self })
   end),
   #node{ key = hash(P) , pid = P, name = "startNode" }.
@@ -108,8 +111,9 @@ start(N, Name) ->
   P = spawn(fun() ->
     Succ = locate_successor(hash(self()), N),
     Self = #node{ key = hash(self()) , pid = self(), name = Name },
+    io:format("~p ~n", [Self#node.pid]),
     % NOTE: collisions for hash(self()) are not a problem for the protocol.
-    spawn_link( fun() -> stabilise(Self,Succ) end),
+    spawn_link( fun() -> stabilise(Self,Succ,[Succ]) end),
     loop(#state{ self = Self, successor = Succ })
   end),
   #node{ key = hash(P) , pid = P, name = Name }.
@@ -127,74 +131,9 @@ locate_successor(Key, N) ->
       end
   end.
 
-%-spec master([#node{}]) -> no_return().
-%master(Channel) ->
-%  receive
-    %{create_channel, ReplyTo, Name} ->
-    %  _NewChannel = start(Channel, Name),
-      %ReplyTo ! NewChannel#node.pid,
-    %  ReplyTo ! {group_created, Name},
-    %  master(Channel);
-    %{join_channel, ReplyTo, Username, Group} ->
-    %  Channel#node.pid ! { get_name, self(), Channel},
-    %  Channels = list_channels(maps:new()),
-    %  JoinedChannel = look_up(Channels, Group),
-    %  case JoinedChannel == undefined of
-    %    true -> ReplyTo ! {channel_joined, JoinedChannel};
-    %    _ ->
-    %      JoinedChannel#node.pid ! {user_joined, Username, ReplyTo},
-    %      ReplyTo ! {channel_joined, JoinedChannel}
-    %  end,
-    %  master(Channel);
-    %{list_channels, ReplyTo} -> 
-    %  Channel#node.pid ! { get_name, self(), Channel},
-    %  Channels = list_channels(maps:new()),
-      %io:format("~p ~n",[Channels]),
-    %  ReplyTo ! {list_channels, Channels},
-    %  master(Channel);
-    %{search_group, ReplyTo, GroupName} ->
-    %  Channel#node.pid ! { get_name, self(), Channel},
-    %  Channels = list_channels(maps:new()),
-    %  Node = look_up(Channels, GroupName),
-      %io:format("~s ~n",[format_node(Node)]),
-    %  ReplyTo ! {group_found, Node, GroupName},
-    %  master(Channel)
-  %end.
-
-
-%list_channels(Channels) ->
-  %io:format("Channels: ~p~n",[Channels]),
-%  receive
-%    {return_name, Name, Node} ->
-%      case maps:is_key(Name, Channels) of 
-%        true -> Channels;
-%        _ -> 
-%          NewChannels = maps:put(Name,Node,Channels),
-%          list_channels(NewChannels)
-%        end;
-%    {done} ->
-%      Channels
-%  end.
-
-
-%look_up(ChannelList, GroupName) ->
-  %io:format("Channels: ~p~n",[Channels]),
-%  case maps:is_key(GroupName, ChannelList) of 
-%      true -> 
-%        Node = maps:get(GroupName,ChannelList);
-%      _ -> 
-%        undefined
-%  end.
-
 %% Event loop of the chord node.
 -spec loop(#state{}) -> no_return().
 loop(S) ->
-  %case S#state.predecessor of
-  %  undefined -> 
-  %    io:format("loop{s=~s}. \n",[format_node(S#state.successor)]);
-  %  _ -> 
-  %    io:format("loop{s=~s, p=~s}. \n",[format_node(S#state.successor),format_node(S#state.predecessor)])
-  %end,
   receive
     { locate_successor, Key, ReplyTo} = M ->
       % request to locate the successor of Key--see Locate_Successor(Key)
@@ -238,8 +177,18 @@ loop(S) ->
       ReplyTo ! { predecessor_of, S#state.self, S#state.predecessor },
       loop(S);
     { set_successor, Succ } ->
-      %io:format("Self = ~s, successor = ~s. \n",[format_node(S#state.self),format_node(Succ)]),
+      % io:format("Self = ~s, successor = ~s. \n",[format_node(S#state.self),format_node(Succ)]),
       loop(S#state{successor = Succ});
+    { get_successors, ReplyTo, Self } ->
+      ReplyTo#node.pid ! { set_successors, S#state.self, S#state.successors, Self },
+      loop(S);
+    { set_successors, FromNode, Successors, ReplyTo } ->
+      NewSuccessors = case length(Successors) >= 8 of
+        true -> lists:append([FromNode], lists:droplast(Successors));
+        _    -> lists:append([FromNode], Successors)
+      end,
+      ReplyTo ! { set, NewSuccessors },
+      loop(S#state{successors = NewSuccessors});
     { get_name, ReplyTo, Startnode } ->
       %io:format("Startnode id: ~p ~n",[Startnode#node.pid]),
       %io:format("Succ id: ~p ~n",[S#state.successor#node.pid]),
@@ -265,6 +214,14 @@ loop(S) ->
         U#user.pid ! {new_message, MessageRecord}
       end, S#state.self#node.users),
       loop(S#state{self = S#state.self#node{messages = NewMessages}});
+    { exit } ->
+      % io:format("I was exited!"),
+      exit(normal);
+    { ping, ReplyTo } ->
+      ReplyTo ! { pong };
+    { remove_node, Node } ->
+      % io:format("Deleting ~p ~n", [Node]),
+      loop(S#state { successors = lists:dropwhile(fun(MyNode) -> MyNode == Node end, S#state.successors) });
     print_info ->
       % DEBUG
       %io:format("NODE INFO~n  state: ~p~n~n  process info: ~p~n \n",[S, process_info(self())]),
@@ -272,8 +229,8 @@ loop(S) ->
   end.
 
 %% @doc Implements the Stabilise procedure of the Chord protocol.
--spec stabilise(#node{},#node{}) -> no_return().
-stabilise(Self,Successor) ->
+-spec stabilise(#node{},#node{}, list()) -> no_return().
+stabilise(Self,Successor,Successors) ->
   timer:sleep(?STABILIZE_INTERVAL),
   %io:format("Self: ~s, stabilize with ~s. \n",[format_node(Self), format_node(Successor)]),
   Successor#node.pid ! { get_predecessor, self() },
@@ -287,10 +244,31 @@ stabilise(Self,Successor) ->
         _ ->
           Successor
       end
+  after ?TIMEOUT ->
+    % io:format("~p: is down.~n",[Successor#node.pid]),
+    
+    lists:foreach(fun(N) ->
+      N#node.pid ! { remove_node, Successor}
+    end, Successors),
+    Self#node.pid ! { remove_node, Successor},
+
+    case length(Successors) > 1 of
+      true -> 
+        NextSuccessor = lists:nth(2, Successors),
+        MyNewSuccessors = lists:delete(Successor, Successors);
+      _ ->
+        NextSuccessor = Self,
+        MyNewSuccessors = [Self]
+    end,
+    stabilise(Self,NextSuccessor,MyNewSuccessors)
   end,
-  %io:format("Self: ~s, notify ~s. \n",[format_node(Self), format_node(NewSuccessor)]),
   NewSuccessor#node.pid ! { notify, Self },
-  stabilise(Self,NewSuccessor).
+  NewSuccessor#node.pid ! { get_successors, Self, self() },
+  NewSuccessors = receive
+    { set, Data} -> Data
+  end,
+  % io:format("Self: ~s, notify ~s. list ~p ~n",[format_node(Self), format_node(NewSuccessor), NewSuccessors]),
+  stabilise(Self,NewSuccessor,NewSuccessors).
 
 %% @doc checks if Key is handled by the successor of the current node
 -spec is_handled_by_successor(key(),#state{}) -> boolean().

@@ -44,6 +44,7 @@ loop(MasterNode) ->
     io:format("2: Search group ~n"),
     io:format("3: Search user ~n"),
     io:format("4: Create group ~n"),
+    io:format("5: Delete node ~n"),
     Term = io:get_line("Choose number: "),
     case Term of
         "1\n" -> channel_loop(MasterNode);
@@ -57,7 +58,10 @@ loop(MasterNode) ->
             _NewChannel = chat:start(MasterNode, TrimGroup),
             io:format("Group was created: ~p~n", [TrimGroup]),
             loop(MasterNode);
-
+        "5\n" ->
+            Pid = list_to_pid(string:trim(io:get_line("Pid: "))),
+            Pid ! { exit },
+            loop(MasterNode);
         _ -> 
             io:format("Not an option~n"),
             loop(MasterNode)
