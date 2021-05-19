@@ -190,8 +190,8 @@ loop(S) ->
       ReplyTo ! { set, NewSuccessors },
       loop(S#state{successors = NewSuccessors});
     { get_name, ReplyTo, Startnode } ->
-      io:format("Startnode id: ~p ~n",[Startnode#node.pid]),
-      io:format("Succ id: ~p ~n",[S#state.successor#node.pid]),
+      %io:format("Startnode id: ~p ~n",[Startnode#node.pid]),
+      %io:format("Succ id: ~p ~n",[S#state.successor#node.pid]),
       case Startnode#node.pid == S#state.successor#node.pid of 
         true -> 
           ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
