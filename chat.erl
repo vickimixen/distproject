@@ -190,8 +190,8 @@ loop(S) ->
       ReplyTo ! { set, NewSuccessors },
       loop(S#state{successors = NewSuccessors});
     { get_name, ReplyTo, Startnode } ->
-      %io:format("Startnode id: ~p ~n",[Startnode#node.pid]),
-      %io:format("Succ id: ~p ~n",[S#state.successor#node.pid]),
+      io:format("Startnode id: ~p ~n",[Startnode#node.pid]),
+      io:format("Succ id: ~p ~n",[S#state.successor#node.pid]),
       case Startnode#node.pid == S#state.successor#node.pid of 
         true -> 
           ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
@@ -269,6 +269,9 @@ stabilise(Self,Successor,Successors) ->
         NextSuccessor = Self,
         MyNewSuccessors = [Self]
     end,
+    %io:format("New succ list: ~p~n", [MyNewSuccessors]),
+    %io:format("self: ~p, succ: ~p~n", [Self#node.pid, NextSuccessor#node.pid]),
+    Self#node.pid ! { set_successor, NextSuccessor },
     stabilise(Self,NextSuccessor,MyNewSuccessors)
   end,
   NewSuccessor#node.pid ! { notify, Self },
@@ -277,6 +280,9 @@ stabilise(Self,Successor,Successors) ->
     { set, Data} -> Data
   end,
   % io:format("Self: ~s, notify ~s. list ~p ~n",[format_node(Self), format_node(NewSuccessor), NewSuccessors]),
+  %io:format("New succ list: ~p~n", [NewSuccessors]),
+  %io:format("self: ~p, succ: ~p~n", [Self#node.pid, NewSuccessor#node.pid]),
+  Self#node.pid ! { set_successor, NewSuccessor },
   stabilise(Self,NewSuccessor,NewSuccessors).
 
 %% @doc checks if Key is handled by the successor of the current node
