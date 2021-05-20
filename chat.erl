@@ -18,6 +18,7 @@
 %%% END OF CONFIG %%%%%%%%%%%
 
 -define(TIMEOUT,1000).
+-define(TIMEOUT_TIME,3000).
 
 % a shorthand used in the code, do not modfy
 -define(KEY_MAX, 1 bsl ?KEY_LENGTH - 1).
@@ -25,6 +26,7 @@
 -type(key() :: non_neg_integer()).
 -opaque(users() :: list()).
 -opaque(messages() :: list()).
+-opaque(q_entries() :: list()).
 
 -record(user, {
 	name :: string(),
@@ -48,6 +50,12 @@
 % ListChannels
 % --> Call ring
 % --> Fetch Pids
+-record(q_entry,{
+  m :: #message{},
+  tag :: integer(),
+  timestamp :: integer(),
+  deliverable :: atom()
+}).
 
 % A node is a Channel.
 -record(node,{
@@ -55,7 +63,9 @@
   key :: pid(),
   pid :: key(),
   users = [] :: users(),
-  messages = [] :: messages()
+  messages = [] :: q_entries(),
+  temp_q = [] :: q_entries(),
+  deliv_q = [] :: q_entries()
 }).
 
 %% internal state for the main event loop of a chord node.
@@ -64,7 +74,8 @@
   successor :: #node{},
   successors = [] :: list(),
   predecessor = undefined :: undefined | #node{},
-  predecessor_monitor :: reference()
+  predecessor_monitor :: reference(),
+  clock = 0 :: integer()
 }).
 
 
@@ -205,24 +216,30 @@ loop(S) ->
     {user_joined, Username, Pid} ->
       User = #user{name = Username, pid = Pid},
       loop(S#state{self = S#state.self#node{users = lists:append(S#state.self#node.users, [User])}});
-    {user_message, User, Message} ->
-      Messages = S#state.self#node.messages,
-      MessageRecord = #message{user = User, text = Message},
-      NewMessages = lists:append(S#state.self#node.messages, [MessageRecord]),
+    %{user_message, User, Message} ->
+    %  Messages = S#state.self#node.messages,
+    %  MessageRecord = #message{user = User, text = Message},
+    %  NewMessages = lists:append(S#state.self#node.messages, [MessageRecord]),
       % Send data to nodes
+    %  lists:foreach(fun(U) ->
+    %    U#user.pid ! {new_message, MessageRecord}
+    %  end, S#state.self#node.users),
+    %  loop(S#state{self = S#state.self#node{messages = NewMessages}});
+    {revise_loop, Message, ReplyTo, Tag, Clock} ->
       lists:foreach(fun(U) ->
-        U#user.pid ! {new_message, MessageRecord}
+        U#user.pid ! {revise_ts, Message, ReplyTo, Tag, Clock}
       end, S#state.self#node.users),
-      loop(S#state{self = S#state.self#node{messages = NewMessages}});
-    {revise_ts, Message, ReplyTo, Tag, Clock} ->
-
+      TimestampList = get_timestamp([], S#state.self#node.users),
+      %io:format("timestamplist: ~p~n", [TimestampList]),
+      Max = case length(TimestampList) of 
+        0 -> 0;
+        1 -> lists:nth(1, TimestampList);
+        _ -> lists:max(get_timestamp([], S#state.self#node.users))
+      end,
       lists:foreach(fun(U) ->
-        U#user.pid ! {revise_ts, Message, ReplyTo, Tag, Clock},
-        receive
-          {proposed_ts, ReplyTo, Tag, Timestamp} ->
-            io:format("proposed")
-        end
-      end, S#state.self#node.users);
+        U#user.pid ! {final_ts, ReplyTo, Tag, Max}
+      end, S#state.self#node.users),
+      loop(S);
     { exit } ->
       % io:format("I was exited!"),
       exit(normal);
@@ -231,11 +248,26 @@ loop(S) ->
     { remove_node, Node } ->
       % io:format("Deleting ~p ~n", [Node]),
       loop(S#state { successors = lists:dropwhile(fun(MyNode) -> MyNode == Node end, S#state.successors) });
+    {final_messages, Deliv_q} ->
+      loop(S#state{self = S#state.self#node{messages = lists:umerge(S#state.self#node.messages, Deliv_q)} });        
     print_info ->
       % DEBUG
       %io:format("NODE INFO~n  state: ~p~n~n  process info: ~p~n \n",[S, process_info(self())]),
       loop(S)
   end.
+
+get_timestamp(List, Users) ->
+  %io:format("users: ~p~n", [Users]),
+  receive
+    {proposed_ts, _ReplyTo, _Tag, Timestamp} ->
+      case length(List) >= length(Users) of 
+        true -> List;
+        _ -> get_timestamp(lists:append(List, [Timestamp]), Users)
+      end
+  after ?TIMEOUT_TIME ->
+    List
+  end.
+
 
 %% @doc Implements the Stabilise procedure of the Chord protocol.
 -spec stabilise(#node{},#node{}, list()) -> no_return().
@@ -279,7 +311,7 @@ stabilise(Self,Successor,Successors) ->
   NewSuccessors = receive
     { set, Data} -> Data
   end,
-  % io:format("Self: ~s, notify ~s. list ~p ~n",[format_node(Self), format_node(NewSuccessor), NewSuccessors]),
+  %io:format("Self: ~s, notify ~s. list ~p ~n",[format_node(Self), format_node(NewSuccessor), NewSuccessors]),
   %io:format("New succ list: ~p~n", [NewSuccessors]),
   %io:format("self: ~p, succ: ~p~n", [Self#node.pid, NewSuccessor#node.pid]),
   Self#node.pid ! { set_successor, NewSuccessor },
