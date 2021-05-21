@@ -85,7 +85,7 @@ group_search_loop(MasterNode, Clock) ->
     MasterNode#node.pid ! { get_name, self(), MasterNode},
     Channels = list_channels(maps:new()),
     Node = look_up(Channels, TrimGroup),
-    case node of 
+    case Node of 
         undefined ->
             io:format("Group not found"),
             group_search_loop(MasterNode, Clock);
