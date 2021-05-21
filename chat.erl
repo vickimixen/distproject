@@ -12,12 +12,12 @@
 % the format used to print keys
 -define(KEY_FORMAT, "~3..0B").
 % the delay between different runs of the Stabilise procedure
--define(STABILIZE_INTERVAL,500).
+-define(STABILIZE_INTERVAL,100).
 % the delay between different runs of the Fix_Fingers procedure
 %-define(FIX_FINGERS_INTERVAL,1000).
 %%% END OF CONFIG %%%%%%%%%%%
 
--define(TIMEOUT,1000).
+-define(TIMEOUT,750).
 
 % a shorthand used in the code, do not modfy
 -define(KEY_MAX, 1 bsl ?KEY_LENGTH - 1).
@@ -205,6 +205,7 @@ loop(S) ->
       case Startnode#node.pid == S#state.successor#node.pid of 
         true -> 
           ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
+          timer:sleep(?TIMEOUT),
           ReplyTo ! {done},
           loop(S); 
         _ -> 
@@ -304,7 +305,7 @@ stabilise(Self,Successor,Successors) ->
           Successor
       end
   after ?TIMEOUT ->
-    io:format("~p: is down.~n",[Successor#node.pid]),
+    % io:format("~p: is down.~n",[Successor#node.pid]),
     
     lists:foreach(fun(N) ->
       N#node.pid ! { remove_node, Successor}
