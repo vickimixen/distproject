@@ -12,13 +12,12 @@
 % the format used to print keys
 -define(KEY_FORMAT, "~3..0B").
 % the delay between different runs of the Stabilise procedure
--define(STABILIZE_INTERVAL,1500).
+-define(STABILIZE_INTERVAL,500).
 % the delay between different runs of the Fix_Fingers procedure
 %-define(FIX_FINGERS_INTERVAL,1000).
 %%% END OF CONFIG %%%%%%%%%%%
 
 -define(TIMEOUT,1000).
--define(TIMEOUT_TIME,3000).
 
 % a shorthand used in the code, do not modfy
 -define(KEY_MAX, 1 bsl ?KEY_LENGTH - 1).
@@ -250,10 +249,29 @@ loop(S) ->
       loop(S#state { successors = lists:dropwhile(fun(MyNode) -> MyNode == Node end, S#state.successors) });
     {final_messages, Deliv_q} ->
       loop(S#state{self = S#state.self#node{messages = lists:umerge(S#state.self#node.messages, Deliv_q)} });        
+    {find_user, Name, ReplyTo, Startnode} ->
+      case Startnode#node.pid == S#state.successor#node.pid of
+        true ->
+          ReplyTo ! {return_users, find_user(S#state.self, Name)},
+          ReplyTo ! {done},
+          loop(S);
+        _ ->
+          ReplyTo ! {return_users, find_user(S#state.self, Name)},
+          S#state.successor#node.pid ! {find_user, Name, ReplyTo, Startnode},
+          loop(S)
+      end;
+    %Send tuple tilbage
     print_info ->
       % DEBUG
       %io:format("NODE INFO~n  state: ~p~n~n  process info: ~p~n \n",[S, process_info(self())]),
       loop(S)
+  end.
+
+find_user(Node, Name) ->
+  Users = Node#node.users,
+  case length([X || X <- Users, string:equal(X#user.name, Name)]) > 0 of
+    true -> {Node#node.name, Name};
+    _ -> undefined
   end.
 
 get_timestamp(List, Users) ->
@@ -264,7 +282,7 @@ get_timestamp(List, Users) ->
         true -> List;
         _ -> get_timestamp(lists:append(List, [Timestamp]), Users)
       end
-  after ?TIMEOUT_TIME ->
+  after ?TIMEOUT ->
     List
   end.
 
@@ -286,7 +304,7 @@ stabilise(Self,Successor,Successors) ->
           Successor
       end
   after ?TIMEOUT ->
-    % io:format("~p: is down.~n",[Successor#node.pid]),
+    io:format("~p: is down.~n",[Successor#node.pid]),
     
     lists:foreach(fun(N) ->
       N#node.pid ! { remove_node, Successor}

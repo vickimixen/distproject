@@ -63,9 +63,7 @@ loop(MasterNode, Clock) ->
     case Term of
         "1\n" -> channel_loop(MasterNode, Clock);
         "2\n" -> group_search_loop(MasterNode, Clock);
-        "3\n" -> 
-            io:format("Not implemented yet ~n"),
-            loop(MasterNode, Clock);
+        "3\n" -> user_loop(MasterNode, Clock);
         "4\n" ->
             GroupName = io:get_line("Groupname for new group: "),
             TrimGroup = string:trim(GroupName),
@@ -108,6 +106,39 @@ group_found_loop(MasterNode, Node, Group, Clock) ->
             io:format("Option no avaliable"),
             group_found_loop(MasterNode, Node, Group, Clock)
     end.
+
+list_users(Users) ->
+    receive
+        {return_users, Result} ->
+            case Result /= undefined of
+                true ->
+                    NewUsers = lists:append(Users, [Result]),
+                    list_users(NewUsers);
+                _ ->
+                    list_users(Users)
+            end;
+        {done} ->
+            Users
+    end.
+
+user_loop(MasterNode, Clock) ->
+    Name = string:trim(io:get_line("What name would like to search for? ")),
+    MasterNode#node.pid ! { find_user, Name, self(), MasterNode},
+    Users = list_users([]),
+    io:format("Users found with this name: ~n"),
+    case length(Users) == 0 of
+        true ->
+            io:format("No users by that name ~n");
+        _ ->
+            lists:foreach(fun(U) ->
+                case U /= undefined of
+                    true -> io:format("~p~n", [U]);
+                    _ -> ok
+                end
+            end, Users)
+    end,
+    loop(MasterNode, Clock).
+
 
 list_channels(Channels) ->
   receive
