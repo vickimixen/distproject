@@ -216,6 +216,9 @@ loop(S) ->
     {user_joined, Username, Pid} ->
       User = #user{name = Username, pid = Pid},
       loop(S#state{self = S#state.self#node{users = lists:append(S#state.self#node.users, [User])}});
+    {group_users, ReplyTo} ->
+      ReplyTo ! {return_group_users, S#state.self#node.users},
+      loop(S); 
     %{user_message, User, Message} ->
     %  Messages = S#state.self#node.messages,
     %  MessageRecord = #message{user = User, text = Message},

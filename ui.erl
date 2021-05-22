@@ -93,8 +93,13 @@ group_search_loop(MasterNode, Clock) ->
     end.
 
 group_found_loop(MasterNode, Node, Group, Clock) ->
-    Answer = io:get_line("Group found, want to connect to it? (Yes/No) "),
+    Answer = io:get_line("Group found, want to see the users in it? (Yes/No) "),
     case Answer of 
+        "Yes\n" -> get_group_users(Node);
+        "No\n" -> ok
+    end,
+    AnswerCon = io:get_line("Want to connect to it? (Yes/No) "),
+    case AnswerCon of 
         "Yes\n" -> 
             Username = string:trim(io:get_line("Please choose a username: ")),
             io:format("Connecting you to: ~p with the name: ~p~n", [Group, Username]),
@@ -177,9 +182,14 @@ channel_loop(MasterNode, Clock) ->
             io:format("Going back to start~n"),
             loop(MasterNode, Clock);
         _ ->
+            Answer = string:trim(io:get_line("Do you want to see the users in the group? (Yes/No) ")),
+            JoinedChannel = look_up(Channels, Group),
+            case Answer of 
+                "Yes" -> get_group_users(JoinedChannel);
+                "No" -> ok
+            end,
             Username = string:trim(io:get_line("Please choose a username: ")),
             io:format("Connecting you to: ~p with the name: ~p~n", [Group, Username]),
-            JoinedChannel = look_up(Channels, Group),
             case JoinedChannel of
                 undefined ->
                     io:format("Channels does not exits~n"),
@@ -188,6 +198,18 @@ channel_loop(MasterNode, Clock) ->
                     JoinedChannel#node.pid ! {user_joined, Username, self()},
                     init_chat_loop(JoinedChannel, MasterNode, Username, Clock) % Get messages from channel node
             end
+    end.
+
+get_group_users(JoinedChannel) ->
+    JoinedChannel#node.pid ! {group_users, self()},
+    receive
+        {return_group_users, Users} ->
+            lists:foreach(fun(U) ->
+                case U /= undefined of
+                    true -> io:format("~p~n", [U]);
+                    _ -> ok
+                end
+            end, Users)
     end.
 
 look_up(ChannelList, GroupName) ->
