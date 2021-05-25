@@ -12,4 +12,4 @@ After the last command the UI runs, there are 5 possibilies:
 5: Delete node
 
 To select the option write the number associated with the option you want.  
-Thoughout the UI it is written what you can do. 
+Throughout the UI it is written what you can do. 

@@ -1,12 +1,12 @@
 -module(ui).
 -export([start/0]).
-% -import(chat,[master_start/0]).
 -import_all(chat).
 
 -define(PRINT_INTERVAL,1500).
 -define(SLEEP_MIN,2000).
 
 -type(key() :: non_neg_integer()).
+% This opaque is simply used to hide the fact that our users are simply a list. We make sure to only append records of the user type to the list to use it as a list of User.
 -opaque(users() :: list()).
 -opaque(messages() :: list()).
 -opaque(q_entries() :: list()).
@@ -19,7 +19,7 @@
 
 % Record for the messages
 -record(message, {
-    user :: user,
+    user :: #user{},
     text :: string()
 }).
 
@@ -43,32 +43,32 @@
 }).
 
 % All Messages
-%   { return_name, string(), node{} }
+%   { return_name, string(), #node{} }
 %   { done }
 %   { return_group_users, users() }
-%   { find_user, string(), pid(), node{} }
+%   { find_user, string(), pid(), #node{} }
 %   { return_users, tuple() }
-%   {revise_loop, message{}, pid(), integer(), integer()}
+%   {revise_loop, #message{}, pid(), integer(), integer()}
 %   { get_deliv, pid() }
 %   { return_deliv, q_entries() }
-%   { revise_ts, message{}, pid(), integer(), integer() }
+%   { revise_ts, #message{}, pid(), integer(), integer() }
 %   { clock_changed, integer() }
 %   { final_ts, pid(), integer(), integer() }
 
 
-%Starts the UI and gets a node in the ring such that the UI can communicate with the ring 
+%% @doc Starts the UI and gets a node in the ring such that the UI can communicate with the ring. 
+%% @see start/0
+-spec start() -> no_return().
 start() ->
     io:format("Welcome to the forum!~n"),
     MasterNode = chat:master_start(),
-    io:format("Master: ~p~n", [MasterNode#node.pid]),
     Clock = 0,
     loop(MasterNode, Clock).
 
-%start(MasterNode) ->
-%    io:format("Welcome to the forum!~n"),
-%    loop(MasterNode).
-
-% The main loop
+%% @doc The main loop.
+%% @param MasterNode is a node in the ring.
+%% @param Clock is the internal clock of the UI.
+-spec loop(#node{}, integer()) -> no_return().
 loop(MasterNode, Clock) ->
     io:format("Your options are: (write number) ~n"),
     io:format("1: List groups ~n"),
@@ -76,6 +76,7 @@ loop(MasterNode, Clock) ->
     io:format("3: Search user ~n"),
     io:format("4: Create group ~n"),
     io:format("5: Delete node ~n"),
+    io:format("6: Close UI ~n"),
     Term = io:get_line("Choose number: "),
     case Term of
         "1\n" -> group_loop(MasterNode, Clock);
@@ -90,12 +91,16 @@ loop(MasterNode, Clock) ->
             Pid = list_to_pid(string:trim(io:get_line("Pid: "))),
             Pid ! { exit },
             loop(MasterNode, Clock);
+        "6\n" -> exit(normal);
         _ -> 
             io:format("Not an option~n"),
             loop(MasterNode, Clock)
     end.
 
-% Loop when listing all the groupchats
+%% @doc Loop when listing all the groupchats.
+%% @param MasterNode is a node in the ring.
+%% @param Clock is the internal clock of the UI.
+-spec group_loop(#node{}, integer()) -> no_return().
 group_loop(MasterNode, Clock) -> 
     MasterNode#node.pid ! { get_name, self(), MasterNode},
     Channels = list_groups(maps:new()),
@@ -130,7 +135,7 @@ group_loop(MasterNode, Clock) ->
             io:format("Connecting you to: ~p with the name: ~p~n", [Group, Username]),
             case JoinedChannel of
                 undefined ->
-                    io:format("Channels does not exits~n"),
+                    io:format("Group does not exits~n"),
                     group_loop(MasterNode, Clock);
                 _ ->
                     JoinedChannel#node.pid ! {user_joined, Username, self()},
@@ -138,21 +143,26 @@ group_loop(MasterNode, Clock) ->
             end
     end.
 
-% Gets the name of all the groupchats in the ring, which is the nodes
-list_groups(Channels) ->
+%% @doc Gets the name of all the groupchats in the ring, which is the nodes.
+%% @param Groups is the list the returns are added to.
+-spec list_groups(list()) -> list().
+list_groups(Groups) ->
   receive
     {return_name, Name, Node} ->
-      case maps:is_key(Name, Channels) of 
-        true -> Channels;
+      case maps:is_key(Name, Groups) of 
+        true -> Groups;
         _ -> 
-          NewChannels = maps:put(Name,Node,Channels),
-          list_groups(NewChannels)
+          NewGroups = maps:put(Name,Node,Groups),
+          list_groups(NewGroups)
         end;
     {done} ->
-      Channels
+      Groups
   end.
 
-% Returns the groupchat name given as parameter if it exists in the list of groupchats given as parameter
+%% @doc Returns the groupchat node with the given name if it exists in the list of groupchats.
+%% @param Grouplist is a list of group-nodes.
+%% @param Groupname is the name of the group seached for.
+-spec look_up(list(), string()) -> #node{}.
 look_up(GroupList, GroupName) ->
   case maps:is_key(GroupName, GroupList) of 
       true -> 
@@ -161,9 +171,11 @@ look_up(GroupList, GroupName) ->
         undefined
   end.
 
-% Gets the users in the given groupchat
-get_group_users(JoinedChannel) ->
-    JoinedChannel#node.pid ! {group_users, self()},
+%% @doc Gets the users in the given groupchat.
+%% @param JoinedGroup is the group the users as connected to.
+-spec get_group_users(#node{}) -> no_return().
+get_group_users(JoinedGroup) ->
+    JoinedGroup#node.pid ! {group_users, self()},
     receive
         {return_group_users, Users} ->
             lists:foreach(fun(U) ->
@@ -174,20 +186,32 @@ get_group_users(JoinedChannel) ->
             end, Users)
     end.
 
-% Asks for a group to seach for and finds it in the list of goups given by the ring
+%% @doc Asks for a group to seach for and finds it in the list of goups given by the ring.
+%% @param MasterNode is a node in the ring.
+%% @param Clock is the internal clock of the UI.
+-spec group_search_loop(#node{}, integer()) -> no_return().
 group_search_loop(MasterNode, Clock) ->
-    Group = string:trim(io:get_line("Group to search for: ")),
+    Group = string:trim(io:get_line("Group to search for (Write \"back\" to go back) : ")),
+    case Group of 
+        "back" -> loop(MasterNode, Clock);
+        _ -> ok
+    end,
     MasterNode#node.pid ! { get_name, self(), MasterNode},
     Groups = list_groups(maps:new()),
     Node = look_up(Groups, Group),
     case Node of 
         undefined ->
-            io:format("Group not found"),
+            io:format("Group not found ~n"),
             group_search_loop(MasterNode, Clock);
         _ -> group_found_loop(MasterNode, Node, Group, Clock)
     end.
 
-% Takes a found group and connects the user to it
+%% @doc Takes a found group and connects the user to it.
+%% @param MasterNode is a node in the ring.
+%% @param Node is the group-node searched for.
+%% @param Group is the name of the group searched for.
+%% @param Clock is the internal clock of the UI.
+-spec group_found_loop(#node{}, #node{}, string(), integer()) -> no_return().
 group_found_loop(MasterNode, Node, Group, Clock) ->
     Answer = io:get_line("Group found, want to see the users in it? (Yes/No) "),
     case Answer of 
@@ -208,7 +232,10 @@ group_found_loop(MasterNode, Node, Group, Clock) ->
             group_found_loop(MasterNode, Node, Group, Clock)
     end.
 
-% Loop for when searching for a user
+%% @doc Loop for when searching for a user.
+%% @param MasterNode is a node in the ring.
+%% @param Clock is the internal clock of the UI.
+-spec user_loop(#node{}, integer()) -> no_return().
 user_loop(MasterNode, Clock) ->
     Name = string:trim(io:get_line("What name would like to search for? ")),
     MasterNode#node.pid ! { find_user, Name, self(), MasterNode},
@@ -227,7 +254,9 @@ user_loop(MasterNode, Clock) ->
     end,
     loop(MasterNode, Clock).
 
-% Gets all the users in the whole ring, meaning in all groupchats
+%% @doc Gets all the users in the whole ring, meaning in all groupchats.
+%% @param Users is the list the returns are added to.
+-spec list_users(list()) -> list().
 list_users(Users) ->
     receive
         {return_users, Result} ->
@@ -243,7 +272,12 @@ list_users(Users) ->
     end.
 
 
-% Loop for when a users is connected to a groupchat, prints the messages alrady in the groupchat
+%% @doc Loop for when a users is connected to a groupchat, prints the messages alrady in the groupchat.
+%% @param Node is the connected group-node.
+%% @param MasterNode is a node in the ring.
+%% @param Username is the users name in the  group.
+%% @param Clock is the internal clock of the UI.
+-spec init_chat_loop(#node{}, #node{}, string(), integer()) -> no_return().
 init_chat_loop(Node, MasterNode, Username, Clock) -> 
     io:format("Connected~n"),
     io:format("Type \"quit\" to leave channel. ~n"),
@@ -256,20 +290,28 @@ init_chat_loop(Node, MasterNode, Username, Clock) ->
     _P1 = spawn(fun() -> print_messages(WaitPid) end),
     wait_mess(Clock, Node).
 
-% The loop run such that the user can write messages in a groupchat
+%% @doc The loop run such that the user can write messages in a groupchat.
+%% @param Node is the connected group-node.
+%% @param MasterNode is a node in the ring.
+%% @param User is the users username and pid.
+%% @param Clock is the internal clock of the UI.
+%% @param WaitPid is the pid of the process handling messages when connected to group.
+-spec write_mess(#node{}, #node{}, #user{}, integer(), pid()) -> no_return().
 write_mess(Node, MasterNode, User, Clock, WaitPid)->
-    Message = io:get_line(": "),
+    Message = string:trim(io:get_line(": ")),
     case string:equal(Message, "quit\n") of
         true -> loop(MasterNode, Clock);
         _ -> 
             NewClock = Clock + 1,
             WaitPid ! {clock_changed, NewClock},
             M = #message{user = User,text = Message},
-            Node#node.pid ! {revise_loop, M, self(), erlang:unique_integer([monotonic]),Clock},
+            Node#node.pid ! {revise_loop, M, self(), erlang:unique_integer([positive]),Clock},
             write_mess(Node, MasterNode, User, NewClock,WaitPid)
     end.
 
-% Gets the messages sent to the groupchat in intervals and prints them (because of total ordering)
+%% @doc Gets the messages sent to the groupchat in intervals and prints them (because of total ordering).
+%% @param WaitPid is the pid of the process handling messages when connected to group.
+-spec print_messages(pid()) -> no_return().
 print_messages(WaitPid) ->
     timer:sleep(?PRINT_INTERVAL),
     WaitPid ! {get_deliv, self()},
@@ -285,7 +327,10 @@ print_messages(WaitPid) ->
             print_messages(WaitPid)
     end.
 
-% Waits on messages used in the algorithm for total ordering
+%% @doc Waits on messages used in the algorithm for total ordering.
+%% @param Clock is the internal clock of the UI.
+%% @param Node is the connected group-node. 
+-spec wait_mess(integer(), #node{}) -> no_return(). 
 wait_mess(Clock, Node) ->
     receive
         {get_deliv, ReplyTo} -> 

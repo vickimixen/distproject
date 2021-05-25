@@ -1,10 +1,7 @@
 -module(chat).
-
-%-export([start/0,stop/0,put/2,get/1,remove/1,size/0,create_slaves/1,remove_slaves/1, exit_master/0]).
-% -export([start/0,start/2,hash/1,is_key/1,locate_successor/2,format_node/1,format_key/1, master_start/0]).
+-export([start/2,master_start/0]).
 -export_type([users/0, messages/0]).
 -export_opaque([key/0, users/0, messages/0, channels/0]).
--compile(export_all).
 
 %%% CONFIG PARAMETERS %%%%%%%
 % number of bits in the keys
@@ -13,8 +10,6 @@
 -define(KEY_FORMAT, "~3..0B").
 % the delay between different runs of the Stabilise procedure
 -define(STABILIZE_INTERVAL,100).
-% the delay between different runs of the Fix_Fingers procedure
-%-define(FIX_FINGERS_INTERVAL,1000).
 %%% END OF CONFIG %%%%%%%%%%%
 
 -define(TIMEOUT,750).
@@ -23,6 +18,7 @@
 -define(KEY_MAX, 1 bsl ?KEY_LENGTH - 1).
 
 -type(key() :: non_neg_integer()).
+% This opaque is simply used to hide the fact that our users are simply a list. We make sure to only append records of the user type to the list to use it as a list of User.
 -opaque(users() :: list()).
 -opaque(messages() :: list()).
 -opaque(q_entries() :: list()).
@@ -35,7 +31,7 @@
 
 % Record for the messages
 -record(message, {
-	user :: user,
+	user :: #user{},
 	text :: string()
 }).
 
@@ -70,54 +66,58 @@
 
 % All Messages:
 %   { locate_successor, key(), pid() }
-%   { notify, node{} }
-%   { 'DOWN', reference(), _Type, _Object, _Info } - Ved ikke lige hvad jeg skal skrive af typer her
+%   { notify, #node{} }
+%   { 'DOWN', reference(), atom(), pid(), atom() } 
 %   { get_predecessor, pid() }
-%   { set_successor, node{} }
+%   { set_successor, #node{} }
 %   { get_successors, pid(), pid() }
 %   { set_successors, pid(), list(), pid() }
-%   { get_name, pid(), node{} }
-%   { return_name, string(), node{} }
+%   { get_name, pid(), #node{} }
+%   { return_name, string(), #node{} }
 %   { done }
 %   { user_joined, string(), pid() }
 %   { group_users, pid() }
 %   { return_group_users, users() }
-%   { revise_loop, message{}, pid(), integer(), integer() }
+%   { revise_loop, #message{}, pid(), integer(), integer() }
 %   { exit }
-%   { remove_node, node{} }
+%   { remove_node, #node{} }
 %   { final_messages, q_entries() }
 %   { find_user, string(), pid(), node{} }
 %   { return_users, tuple() }
 %   print_info
 %   { proposed_ts, pid(), integer(), integer() }
-%   { predecessor_of, node{}, node{} }
+%   { predecessor_of, #node{}, #node{} }
 
 
-%% @doc checks if the argument is a key
+%% @doc checks if the argument is a key.
+%% @param X value to check if is key.
 -spec is_key(_) -> boolean().
 is_key(X) when is_integer(X), 0 =< X, X =< ?KEY_MAX -> true;
 is_key(_) -> false.
 
 %% @doc pretty printing untility for keys
+%% @param K is a key.
 -spec format_key(key()) -> string().
 format_key(K) -> 
   io_lib:format(?KEY_FORMAT,[K]).
 
 %% @doc Computes the key for a term.
+%% @param T value to be hashed.
 -spec hash(_) -> key().
 hash(T) -> erlang:phash2(T,?KEY_MAX).
 
-%% @doc pretty printing untility for chord nodes
+%% @doc pretty printing untility for chord nodes.
+%% @param N is the node to be formated. 
 -spec format_node(#node{}) -> string().
 format_node(N) -> 
   io_lib:format("("++?KEY_FORMAT++" ~p)",[N#node.key,N#node.pid]).
 
-% Returns the node which is the masternode
-- spec master_start() -> pid().
+%% @doc Returns the node which is the masternode.
+-spec master_start() -> #node{}.
 master_start() ->
   Node = start().
 
-%% @doc Creates a new ring
+%% @doc Creates a new ring.
 -spec start() -> #node{}.
 start() ->
   P = spawn(fun() ->
@@ -127,7 +127,9 @@ start() ->
   end),
   #node{ key = hash(P) , pid = P, name = "startNode" }.
 
-%% @doc Joins an existing ring
+%% @doc Joins an existing ring.
+%% @param N is a node in a existing ring.
+%% @param Name is the name of the group node joining the ring.
 -spec start(#node{}, string()) -> #node{}.
 start(N, Name) ->
   P = spawn(fun() ->
@@ -140,6 +142,8 @@ start(N, Name) ->
   #node{ key = hash(P) , pid = P, name = Name }.
 
 %% @doc Locate the successor node to Key.
+%% @param Key is the key of the node to get a successor.
+%% @param N is a node in the ring.
 -spec locate_successor(key(),#node{}) -> #node{}.
 locate_successor(Key, N) ->
   case is_key(Key) of
@@ -153,6 +157,9 @@ locate_successor(Key, N) ->
   end.
 
 %% @doc Implements the Stabilise procedure of the Chord protocol.
+%% @param Self is the node to be stabilised.
+%% @param Successor is the node currently believed to be successor.
+%% @param Successors is the nodes list of successors.
 -spec stabilise(#node{},#node{}, list()) -> no_return().
 stabilise(Self,Successor,Successors) ->
   timer:sleep(?STABILIZE_INTERVAL),
@@ -191,7 +198,8 @@ stabilise(Self,Successor,Successors) ->
   Self#node.pid ! { set_successor, NewSuccessor },
   stabilise(Self,NewSuccessor,NewSuccessors).
 
-%% Event loop of the chord node.
+%% @doc Event loop of the chord node.
+%% @param S is the state of the node.
 -spec loop(#state{}) -> no_return().
 loop(S) ->
   receive
@@ -286,7 +294,10 @@ loop(S) ->
       loop(S#state { successors = lists:dropwhile(fun(MyNode) -> MyNode == Node end, S#state.successors) });
     { final_messages, Deliv_q } ->
       % From the algorithm for total ordering, sorted list of messages based on timestamp
-      loop(S#state{self = S#state.self#node{messages = lists:umerge(S#state.self#node.messages, Deliv_q)} });        
+      SortedLargeMess = lists:sort(fun(X, Y) -> X#q_entry.timestamp > Y#q_entry.timestamp end, lists:umerge(S#state.self#node.messages, Deliv_q)),
+      NewMessages = lists:sublist(SortedLargeMess, 1, 10),
+      Sortedsmall = lists:sort(fun(X, Y) -> X#q_entry.timestamp < Y#q_entry.timestamp end, NewMessages),
+      loop(S#state{self = S#state.self#node{messages = Sortedsmall} });        
     { find_user, Name, ReplyTo, Startnode } ->
       % Gets the user which has Name as its name
       case Startnode#node.pid == S#state.successor#node.pid of
@@ -305,7 +316,10 @@ loop(S) ->
       loop(S)
   end.
 
-% Finds the user with the name Name in the node's list of users
+%% @doc Finds the user with the a given name in the node's list of users.
+%% @param Node is the node to get users from.
+%% @param Name is the name of the user to find.
+-spec find_user(#node{}, string()) -> tuple().
 find_user(Node, Name) ->
   Users = Node#node.users,
   case length([X || X <- Users, string:equal(X#user.name, Name)]) > 0 of
@@ -313,7 +327,10 @@ find_user(Node, Name) ->
     _ -> undefined
   end.
 
-% Waits on the message proposed_ts from all the users, returns after some timeout
+%% @doc Waits on the message proposed_ts from all the users, returns after some timeout.
+%% @param List is the list to add timestamps to.
+%% @param Users is the list of users the message have been sent to.
+-spec get_timestamp(list(),list()) -> list().
 get_timestamp(List, Users) ->
   receive
     { proposed_ts, _ReplyTo, _Tag, Timestamp } ->
@@ -325,12 +342,17 @@ get_timestamp(List, Users) ->
     List
   end.
 
-%% @doc checks if Key is handled by the successor of the current node
+%% @doc checks if Key is handled by the successor of the current node.
+%% @param Key is the key to check.
+%% @param S is a state containing the node key and successor key.
 -spec is_handled_by_successor(key(),#state{}) -> boolean().
 is_handled_by_successor(Key, S) -> 
   is_in_right_closed_interval(Key,S#state.self#node.key,S#state.successor#node.key).
 
 %% @doc checks if X lies in the key interval (Y,Z].
+%% @param X value to check.
+%% @param Y where the interval starts.
+%% @param Z where the interval ends.
 -spec is_in_right_closed_interval(key(),key(),key()) -> boolean().
 is_in_right_closed_interval(X, Y, Z) when Y < Z ->
   (Y < X) and (X =< Z);
@@ -338,6 +360,9 @@ is_in_right_closed_interval(X, Y, Z) ->
   (X =< Z) or (Y < X).
 
 %% @doc checks wether X lies in the interval (Y,Z).
+%% @param X value to check.
+%% @param Y where the interval starts.
+%% @param Z where the interval ends.
 -spec is_in_interval(key(),key(),key()) -> boolean().
 is_in_interval(X,Y,Z) when Y < Z ->
   (Y < X) and (X < Z);
