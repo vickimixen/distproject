@@ -14,7 +14,7 @@
 
 -define(TIMEOUT,750).
 
-% a shorthand used in the code, do not modfy
+% a shorthand used in the code, do not modify
 -define(KEY_MAX, 1 bsl ?KEY_LENGTH - 1).
 
 -type(key() :: non_neg_integer()).
@@ -95,7 +95,7 @@
 is_key(X) when is_integer(X), 0 =< X, X =< ?KEY_MAX -> true;
 is_key(_) -> false.
 
-%% @doc pretty printing untility for keys
+%% @doc pretty printing utility for keys
 %% @param K is a key.
 -spec format_key(key()) -> string().
 format_key(K) -> 
@@ -106,8 +106,8 @@ format_key(K) ->
 -spec hash(_) -> key().
 hash(T) -> erlang:phash2(T,?KEY_MAX).
 
-%% @doc pretty printing untility for chord nodes.
-%% @param N is the node to be formated. 
+%% @doc pretty printing utility for chord nodes.
+%% @param N is the node to be formatted.
 -spec format_node(#node{}) -> string().
 format_node(N) -> 
   io_lib:format("("++?KEY_FORMAT++" ~p)",[N#node.key,N#node.pid]).
@@ -253,7 +253,7 @@ loop(S) ->
       ReplyTo ! { set, NewSuccessors },
       loop(S#state{successors = NewSuccessors});
     { get_name, ReplyTo, Startnode } ->
-      % Gets the name of the groupchat (the node) and thens the request to its successor
+      % Gets the name of the groupchat (the node) and then sends the request to its successor
       case Startnode#node.pid == S#state.successor#node.pid of  % unless it as reached where it started in the ring 
         true -> 
           ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
@@ -290,7 +290,7 @@ loop(S) ->
       loop(S);
     { exit } -> exit(normal);
     { remove_node, Node } ->
-      % When a node is belived to be down, it is then removed from the node's successor lists
+      % When a node is believed to be down, it is then removed from the node's successor lists
       loop(S#state { successors = lists:dropwhile(fun(MyNode) -> MyNode == Node end, S#state.successors) });
     { final_messages, Deliv_q } ->
       % From the algorithm for total ordering, sorted list of messages based on timestamp
@@ -359,7 +359,7 @@ is_in_right_closed_interval(X, Y, Z) when Y < Z ->
 is_in_right_closed_interval(X, Y, Z) ->
   (X =< Z) or (Y < X).
 
-%% @doc checks wether X lies in the interval (Y,Z).
+%% @doc checks whether X lies in the interval (Y,Z).
 %% @param X value to check.
 %% @param Y where the interval starts.
 %% @param Z where the interval ends.

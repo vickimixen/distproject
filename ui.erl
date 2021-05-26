@@ -104,10 +104,10 @@ loop(MasterNode, Clock) ->
 group_loop(MasterNode, Clock) -> 
     MasterNode#node.pid ! { get_name, self(), MasterNode},
     Channels = list_groups(maps:new()),
-    io:format("Here is the different channels avaliable~n"),
+    io:format("Here are the different groups avaliable~n"),
     case maps:size(Channels) == 1 of 
         true -> 
-            io:format("No channels made ~n"),
+            io:format("No groups made ~n"),
             loop(MasterNode, Clock);
         _ ->
             maps:fold(fun(K, _V, ok) ->
@@ -161,7 +161,7 @@ list_groups(Groups) ->
 
 %% @doc Returns the groupchat node with the given name if it exists in the list of groupchats.
 %% @param Grouplist is a list of group-nodes.
-%% @param Groupname is the name of the group seached for.
+%% @param Groupname is the name of the group searched for.
 -spec look_up(list(), string()) -> #node{}.
 look_up(GroupList, GroupName) ->
   case maps:is_key(GroupName, GroupList) of 
@@ -186,7 +186,7 @@ get_group_users(JoinedGroup) ->
             end, Users)
     end.
 
-%% @doc Asks for a group to seach for and finds it in the list of goups given by the ring.
+%% @doc Asks for a group to search for and finds it in the list of groups given by the ring.
 %% @param MasterNode is a node in the ring.
 %% @param Clock is the internal clock of the UI.
 -spec group_search_loop(#node{}, integer()) -> no_return().
@@ -272,7 +272,7 @@ list_users(Users) ->
     end.
 
 
-%% @doc Loop for when a users is connected to a groupchat, prints the messages alrady in the groupchat.
+%% @doc Loop for when a users is connected to a groupchat, prints the messages already in the groupchat.
 %% @param Node is the connected group-node.
 %% @param MasterNode is a node in the ring.
 %% @param Username is the users name in the  group.
