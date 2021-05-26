@@ -102,6 +102,7 @@ format_key(K) ->
   io_lib:format(?KEY_FORMAT,[K]).
 
 %% @doc Computes the key for a term.
+%% @see hash/1
 %% @param T value to be hashed.
 -spec hash(_) -> key().
 hash(T) -> erlang:phash2(T,?KEY_MAX).
@@ -112,28 +113,24 @@ hash(T) -> erlang:phash2(T,?KEY_MAX).
 format_node(N) -> 
   io_lib:format("("++?KEY_FORMAT++" ~p)",[N#node.key,N#node.pid]).
 
-%% @doc Returns the node which is the masternode.
-%-spec master_start() -> #node{}.
-%master_start() ->
-%  Node = start().
-
 %% @doc Creates a new ring.
+%% @see start/0
 -spec start() -> #node{}.
 start() ->
-  P = spawn(fun() ->
+  P = spawn(fun() -> % starts up a node in the created ring and the stabilising of the node
     Self = #node{ key = hash(self()) , pid = self(), name = "startNode" },
     spawn_link( fun() -> stabilise(Self,Self,[Self]) end),
     loop(#state{ self = Self, successor = Self })
   end),
-  %#node{ key = hash(P) , pid = P, name = "startNode" }.
-  {node(),pid_to_list(P)}.
+  {node(),pid_to_list(P)}. % return information for erlang node and the pid
 
 %% @doc Joins an existing ring.
+%% @see start/2
 %% @param N is a node in a existing ring.
 %% @param Name is the name of the group node joining the ring.
 -spec start(#node{}, string()) -> #node{}.
 start(N, Name) ->
-  P = spawn(fun() ->
+  P = spawn(fun() -> % gets belived successor and start stabilising for node
     Succ = locate_successor(hash(self()), N),
     Self = #node{ key = hash(self()) , pid = self(), name = Name },
     % NOTE: collisions for hash(self()) are not a problem for the protocol.
@@ -164,7 +161,7 @@ locate_successor(Key, N) ->
 -spec stabilise(#node{},#node{}, list()) -> no_return().
 stabilise(Self,Successor,Successors) ->
   timer:sleep(?STABILIZE_INTERVAL),
-  Successor#node.pid ! { get_predecessor, self() },
+  Successor#node.pid ! { get_predecessor, self() }, % ask belived successor for its predecessor
   NewSuccessor = receive
     { predecessor_of, Successor, undefined } -> Successor;
     { predecessor_of, Successor, X } -> 
@@ -175,28 +172,30 @@ stabilise(Self,Successor,Successors) ->
         _ ->
           Successor
       end
-  after ?TIMEOUT ->
-    lists:foreach(fun(N) ->
+  after ?TIMEOUT -> % triggered if successor have not answered for some time
+    lists:foreach(fun(N) -> % tell the nodes in the successor list to remove the node not responding in their succ list
       N#node.pid ! { remove_node, Successor}
     end, Successors),
-    Self#node.pid ! { remove_node, Successor},
+    Self#node.pid ! { remove_node, Successor}, % tell the node this stabilising is for
     case length(Successors) > 1 of
       true -> 
-        NextSuccessor = lists:nth(2, Successors),
-        MyNewSuccessors = lists:delete(Successor, Successors);
+        NextSuccessor = lists:nth(2, Successors), % get the next successor from the list
+        MyNewSuccessors = lists:delete(Successor, Successors); % remove not responding succ from list
       _ ->
+        % if only one successor in successors list
         NextSuccessor = Self,
         MyNewSuccessors = [Self]
     end,
-    Self#node.pid ! { set_successor, NextSuccessor },
-    stabilise(Self,NextSuccessor,MyNewSuccessors)
+    Self#node.pid ! { set_successor, NextSuccessor }, % tell the node to update its successor
+    stabilise(Self,NextSuccessor,MyNewSuccessors) % run stabilise again
   end,
-  NewSuccessor#node.pid ! { notify, Self },
-  NewSuccessor#node.pid ! { get_successors, Self, self() },
+  % believed successor has responded and maybe new successor found
+  NewSuccessor#node.pid ! { notify, Self }, % tell new successor that the node is its predecessor
+  NewSuccessor#node.pid ! { get_successors, Self, self() }, % get the new successor's successor list
   NewSuccessors = receive
     { set, Data} -> Data
-  end,
-  Self#node.pid ! { set_successor, NewSuccessor },
+  end, % gets the updated successor list form the node
+  Self#node.pid ! { set_successor, NewSuccessor }, % tells the node to set a new successor
   stabilise(Self,NewSuccessor,NewSuccessors).
 
 %% @doc Event loop of the chord node.
@@ -237,39 +236,41 @@ loop(S) ->
       % the predecessor is believed to have failed and removed
       loop(S#state{ predecessor = undefined, predecessor_monitor = undefined });
     { get_predecessor, ReplyTo } ->
+      % gets the node's predecessor
       ReplyTo ! { predecessor_of, S#state.self, S#state.predecessor },
       loop(S);
     { set_successor, Succ } ->
+      % sets the successor of the node
       loop(S#state{successor = Succ});
     { get_successors, ReplyTo, Self } ->
-      % Gets the node's list of successors
+      % Sends the node's list of successors to the ReplyTo-pid
       ReplyTo#node.pid ! { set_successors, S#state.self, S#state.successors, Self },
       loop(S);
     { set_successors, FromNode, Successors, ReplyTo } ->
       % Sets the node's list of successors
-      NewSuccessors = case length(Successors) >= 8 of
+      NewSuccessors = case length(Successors) >= 8 of % makes sure the list of successors are not larger than 8
         true -> lists:append([FromNode], lists:droplast(Successors));
         _    -> lists:append([FromNode], Successors)
       end,
-      ReplyTo ! { set, NewSuccessors },
+      ReplyTo ! { set, NewSuccessors }, % sends the new list of successors to the stabalise process
       loop(S#state{successors = NewSuccessors});
     { get_name, ReplyTo, StartPid } ->
       % Gets the name of the groupchat (the node) and then sends the request to its successor
       case StartPid == S#state.successor#node.pid of  % unless it as reached where it started in the ring 
         true -> 
-          ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
-          timer:sleep(?TIMEOUT),
-          ReplyTo ! {done},
+          ReplyTo ! {return_name, S#state.self#node.name, S#state.self}, % sends the name to the UI
+          timer:sleep(?TIMEOUT), % makes sure to give the processes some time to all respond
+          ReplyTo ! {done}, % have been around the ring, tells so to the UI
           loop(S); 
         _ -> 
-          ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
-          S#state.successor#node.pid ! {get_name, ReplyTo, StartPid},
+          ReplyTo ! {return_name, S#state.self#node.name, S#state.self}, % sends the name to the UI
+          S#state.successor#node.pid ! {get_name, ReplyTo, StartPid}, % sends the message to its successor
           loop(S)
       end;
     { user_joined, Username, Pid } ->
       % A users as joined the groupchat
       User = #user{name = Username, pid = Pid},
-      loop(S#state{self = S#state.self#node{users = lists:append(S#state.self#node.users, [User])}});
+      loop(S#state{self = S#state.self#node{users = lists:append(S#state.self#node.users, [User])}}); % adds users record to users list
     { group_users, ReplyTo } ->
       % Request for the groupchat's (the node's) list of users
       ReplyTo ! {return_group_users, S#state.self#node.users},
@@ -278,37 +279,39 @@ loop(S) ->
       % Message used in the algorithm for total ordering, finds the max of all the possible timestamps from the users
       lists:foreach(fun(U) ->
         U#user.pid ! {revise_ts, Message, ReplyTo, Tag, Clock}
-      end, S#state.self#node.users),
-      TimestampList = get_timestamp([], S#state.self#node.users),
+      end, S#state.self#node.users), % asks all users for their timestamp
+      TimestampList = get_timestamp([], S#state.self#node.users), % collects the timestamps
       Max = case length(TimestampList) of 
         0 -> 0;
         1 -> lists:nth(1, TimestampList);
         _ -> lists:max(TimestampList)
-      end,
+      end, % get the max of the timestamps in the list
       lists:foreach(fun(U) ->
         U#user.pid ! {final_ts, ReplyTo, Tag, Max}
-      end, S#state.self#node.users),
+      end, S#state.self#node.users), % sends the max timestamp to all the users
       loop(S);
     { exit } -> exit(normal);
     { remove_node, Node } ->
       % When a node is believed to be down, it is then removed from the node's successor lists
       loop(S#state { successors = lists:dropwhile(fun(MyNode) -> MyNode == Node end, S#state.successors) });
     { final_messages, Deliv_q } ->
-      % From the algorithm for total ordering, sorted list of messages based on timestamp
+      % Gets messages to add to message history, sorted list of messages based on timestamp
+      % first messages are sorted such that the larges timestamp is in the begining
       SortedLargeMess = lists:sort(fun(X, Y) -> X#q_entry.timestamp > Y#q_entry.timestamp end, lists:umerge(S#state.self#node.messages, Deliv_q)),
-      NewMessages = lists:sublist(SortedLargeMess, 1, 10),
-      Sortedsmall = lists:sort(fun(X, Y) -> X#q_entry.timestamp < Y#q_entry.timestamp end, NewMessages),
-      loop(S#state{self = S#state.self#node{messages = Sortedsmall} });        
+      NewMessages = lists:sublist(SortedLargeMess, 1, 10), % bounds the messages, and removes the ones with smaller timestamps
+      Sortedsmall = lists:sort(fun(X, Y) -> X#q_entry.timestamp < Y#q_entry.timestamp end, NewMessages), % sorts such smaller timestamps is in the beginning (right print order)
+      loop(S#state{self = S#state.self#node{messages = Sortedsmall} }); % update message history       
     { find_user, Name, ReplyTo, StartPid } ->
       % Gets the user which has Name as its name
-      case StartPid == S#state.successor#node.pid of
+      case StartPid == S#state.successor#node.pid of % checks if it is where it began
         true ->
-          ReplyTo ! {return_users, find_user(S#state.self, Name)},
-          ReplyTo ! {done},
+          ReplyTo ! {return_users, find_user(S#state.self, Name)}, % sends the user with the search name
+          timer:sleep(?TIMEOUT), % makes sure to give the processes some time to all respond
+          ReplyTo ! {done}, % tells that it has been through the ring
           loop(S);
         _ ->
-          ReplyTo ! {return_users, find_user(S#state.self, Name)},
-          S#state.successor#node.pid ! {find_user, Name, ReplyTo, StartPid},
+          ReplyTo ! {return_users, find_user(S#state.self, Name)}, % sends the user with the search name
+          S#state.successor#node.pid ! {find_user, Name, ReplyTo, StartPid}, % sends the message to the nodes successor
           loop(S)
       end;
     print_info ->
@@ -323,8 +326,8 @@ loop(S) ->
 -spec find_user(#node{}, string()) -> tuple().
 find_user(Node, Name) ->
   Users = Node#node.users,
-  case length([X || X <- Users, string:equal(X#user.name, Name)]) > 0 of
-    true -> {Node#node.name, Name};
+  case length([X || X <- Users, string:equal(X#user.name, Name)]) > 0 of % finds the elements in the users list that match the username seached for
+    true -> {Node#node.name, Name}; % only one returned because will all be the same (no knowledge of pid)
     _ -> undefined
   end.
 
@@ -334,12 +337,12 @@ find_user(Node, Name) ->
 -spec get_timestamp(list(),list()) -> list().
 get_timestamp(List, Users) ->
   receive
-    { proposed_ts, _ReplyTo, _Tag, Timestamp } ->
-      case length(List) >= length(Users) of 
-        true -> List;
-        _ -> get_timestamp(lists:append(List, [Timestamp]), Users)
+    { proposed_ts, _ReplyTo, _Tag, Timestamp } -> % the timestamp the user think is right
+      case length(List) >= length(Users) of % checks if all users as answered 
+        true -> List; % if yes return list
+        _ -> get_timestamp(lists:append(List, [Timestamp]), Users) % if no run function again with the timestamp added to the list
       end
-  after ?TIMEOUT ->
+  after ?TIMEOUT -> % timeout for if some users are down
     List
   end.
 
