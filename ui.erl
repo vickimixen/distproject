@@ -1,5 +1,5 @@
 -module(ui).
--export([start/0]).
+-export([start/0, join/1]).
 -import_all(chat).
 
 -define(PRINT_INTERVAL,1500).
@@ -60,16 +60,22 @@
 %% @see start/0
 -spec start() -> no_return().
 start() ->
-    io:format("Welcome to the forum!~n"),
-    MasterNode = chat:master_start(),
+    RingTuple = chat:start().
+
+%% @doc Starts the UI and connects it with the ring. 
+%% @see join/1
+-spec join(tuple()) -> no_return().
+join({GlobalNode, PidString}) ->
+    Pid = rpc:call(GlobalNode, erlang, list_to_pid, [PidString]),
     Clock = 0,
-    loop(MasterNode, Clock).
+    io:format("Welcome to the forum!~n"),
+    loop(Pid, Clock).
 
 %% @doc The main loop.
 %% @param MasterNode is a node in the ring.
 %% @param Clock is the internal clock of the UI.
--spec loop(#node{}, integer()) -> no_return().
-loop(MasterNode, Clock) ->
+-spec loop(pid(), integer()) -> no_return().
+loop(MasterPid, Clock) ->
     io:format("Your options are: (write number) ~n"),
     io:format("1: List groups ~n"),
     io:format("2: Search group ~n"),
@@ -79,36 +85,37 @@ loop(MasterNode, Clock) ->
     io:format("6: Close UI ~n"),
     Term = io:get_line("Choose number: "),
     case Term of
-        "1\n" -> group_loop(MasterNode, Clock);
-        "2\n" -> group_search_loop(MasterNode, Clock);
-        "3\n" -> user_loop(MasterNode, Clock);
+        "1\n" -> group_loop(MasterPid, Clock);
+        "2\n" -> group_search_loop(MasterPid, Clock);
+        "3\n" -> user_loop(MasterPid, Clock);
         "4\n" ->
             GroupName = string:trim(io:get_line("Groupname for new group: ")),
-            _NewChannel = chat:start(MasterNode, GroupName),
+            N = #node{ key = chat:hash(MasterPid) , pid = MasterPid},
+            _NewChannel = chat:start(N, GroupName),
             io:format("Group was created: ~p~n", [GroupName]),
-            loop(MasterNode, Clock);
+            loop(MasterPid, Clock);
         "5\n" ->
             Pid = list_to_pid(string:trim(io:get_line("Pid: "))),
             Pid ! { exit },
-            loop(MasterNode, Clock);
-        "6\n" -> exit(normal);
+            loop(MasterPid, Clock);
+        "6\n" -> exit(kill);
         _ -> 
             io:format("Not an option~n"),
-            loop(MasterNode, Clock)
+            loop(MasterPid, Clock)
     end.
 
 %% @doc Loop when listing all the groupchats.
-%% @param MasterNode is a node in the ring.
+%% @param MasterPid is the pid of a node in the ring.
 %% @param Clock is the internal clock of the UI.
--spec group_loop(#node{}, integer()) -> no_return().
-group_loop(MasterNode, Clock) -> 
-    MasterNode#node.pid ! { get_name, self(), MasterNode},
+-spec group_loop(pid(), integer()) -> no_return().
+group_loop(MasterPid, Clock) -> 
+    MasterPid ! { get_name, self(), MasterPid},
     Channels = list_groups(maps:new()),
     io:format("Here are the different groups avaliable~n"),
     case maps:size(Channels) == 1 of 
         true -> 
             io:format("No groups made ~n"),
-            loop(MasterNode, Clock);
+            loop(MasterPid, Clock);
         _ ->
             maps:fold(fun(K, _V, ok) ->
                 case string:equal(K, "startNode") of 
@@ -123,23 +130,24 @@ group_loop(MasterNode, Clock) ->
     case string:equal(Group, "back") of
         true -> 
             io:format("Going back to start~n"),
-            loop(MasterNode, Clock);
+            loop(MasterPid, Clock);
         _ ->
-            Answer = string:trim(io:get_line("Do you want to see the users in the group? (Yes/No) ")),
             JoinedChannel = look_up(Channels, Group),
-            case Answer of 
-                "Yes" -> get_group_users(JoinedChannel);
-                "No" -> ok
-            end,
-            Username = string:trim(io:get_line("Please choose a username: ")),
-            io:format("Connecting you to: ~p with the name: ~p~n", [Group, Username]),
             case JoinedChannel of
                 undefined ->
                     io:format("Group does not exits~n"),
-                    group_loop(MasterNode, Clock);
+                    group_loop(MasterPid, Clock);
                 _ ->
+                    Answer = string:trim(io:get_line("Do you want to see the users in the group? (Yes/No) ")),
+                    case Answer of 
+                        "Yes" -> get_group_users(JoinedChannel);
+                        "No" -> ok;
+                        _ -> io:format("bad input")
+                    end,
+                    Username = string:trim(io:get_line("Please choose a username: ")),
+                    io:format("Connecting you to: ~p with the name: ~p~n", [Group, Username]),
                     JoinedChannel#node.pid ! {user_joined, Username, self()},
-                    init_chat_loop(JoinedChannel, MasterNode, Username, Clock) 
+                    init_chat_loop(JoinedChannel, MasterPid, Username, Clock) 
             end
     end.
 
@@ -187,36 +195,37 @@ get_group_users(JoinedGroup) ->
     end.
 
 %% @doc Asks for a group to search for and finds it in the list of groups given by the ring.
-%% @param MasterNode is a node in the ring.
+%% @param MasterPid is the pid of a node in the ring.
 %% @param Clock is the internal clock of the UI.
--spec group_search_loop(#node{}, integer()) -> no_return().
-group_search_loop(MasterNode, Clock) ->
+-spec group_search_loop(pid(), integer()) -> no_return().
+group_search_loop(MasterPid, Clock) ->
     Group = string:trim(io:get_line("Group to search for (Write \"back\" to go back) : ")),
     case Group of 
-        "back" -> loop(MasterNode, Clock);
+        "back" -> loop(MasterPid, Clock);
         _ -> ok
     end,
-    MasterNode#node.pid ! { get_name, self(), MasterNode},
+    MasterPid ! { get_name, self(), MasterPid},
     Groups = list_groups(maps:new()),
     Node = look_up(Groups, Group),
     case Node of 
         undefined ->
             io:format("Group not found ~n"),
-            group_search_loop(MasterNode, Clock);
-        _ -> group_found_loop(MasterNode, Node, Group, Clock)
+            group_search_loop(MasterPid, Clock);
+        _ -> group_found_loop(MasterPid, Node, Group, Clock)
     end.
 
 %% @doc Takes a found group and connects the user to it.
-%% @param MasterNode is a node in the ring.
+%% @param MasterPid is the pid of a node in the ring.
 %% @param Node is the group-node searched for.
 %% @param Group is the name of the group searched for.
 %% @param Clock is the internal clock of the UI.
--spec group_found_loop(#node{}, #node{}, string(), integer()) -> no_return().
-group_found_loop(MasterNode, Node, Group, Clock) ->
+-spec group_found_loop(pid(), #node{}, string(), integer()) -> no_return().
+group_found_loop(MasterPid, Node, Group, Clock) ->
     Answer = io:get_line("Group found, want to see the users in it? (Yes/No) "),
     case Answer of 
         "Yes\n" -> get_group_users(Node);
-        "No\n" -> ok
+        "No\n" -> ok;
+        _ -> io:format("bad input")
     end,
     AnswerCon = io:get_line("Want to connect to it? (Yes/No) "),
     case AnswerCon of 
@@ -224,21 +233,21 @@ group_found_loop(MasterNode, Node, Group, Clock) ->
             Username = string:trim(io:get_line("Please choose a username: ")),
             io:format("Connecting you to: ~p with the name: ~p~n", [Group, Username]),
             Node#node.pid ! {user_joined, Username, self()},
-            init_chat_loop(Node, MasterNode, Username, Clock);
+            init_chat_loop(Node, MasterPid, Username, Clock);
         "No\n" ->  
-            loop(MasterNode, Clock);
+            loop(MasterPid, Clock);
         _ -> 
             io:format("Option no avaliable"),
-            group_found_loop(MasterNode, Node, Group, Clock)
+            group_found_loop(MasterPid, Node, Group, Clock)
     end.
 
 %% @doc Loop for when searching for a user.
-%% @param MasterNode is a node in the ring.
+%% @param MasterPid is the pid of a node in the ring.
 %% @param Clock is the internal clock of the UI.
--spec user_loop(#node{}, integer()) -> no_return().
-user_loop(MasterNode, Clock) ->
+-spec user_loop(pid(), integer()) -> no_return().
+user_loop(MasterPid, Clock) ->
     Name = string:trim(io:get_line("What name would like to search for? ")),
-    MasterNode#node.pid ! { find_user, Name, self(), MasterNode},
+    MasterPid ! { find_user, Name, self(), MasterPid},
     Users = list_users([]),
     io:format("Users found with the name: ~n"),
     case length(Users) == 0 of
@@ -252,7 +261,7 @@ user_loop(MasterNode, Clock) ->
                 end
             end, Users)
     end,
-    loop(MasterNode, Clock).
+    loop(MasterPid, Clock).
 
 %% @doc Gets all the users in the whole ring, meaning in all groupchats.
 %% @param Users is the list the returns are added to.
@@ -274,11 +283,11 @@ list_users(Users) ->
 
 %% @doc Loop for when a users is connected to a groupchat, prints the messages already in the groupchat.
 %% @param Node is the connected group-node.
-%% @param MasterNode is a node in the ring.
+%% @param MasterPid is the pid of a node in the ring.
 %% @param Username is the users name in the  group.
 %% @param Clock is the internal clock of the UI.
--spec init_chat_loop(#node{}, #node{}, string(), integer()) -> no_return().
-init_chat_loop(Node, MasterNode, Username, Clock) -> 
+-spec init_chat_loop(#node{}, pid(), string(), integer()) -> no_return().
+init_chat_loop(Node, MasterPid, Username, Clock) -> 
     io:format("Connected~n"),
     io:format("Type \"quit\" to leave channel. ~n"),
     lists:foreach(fun(U) ->
@@ -286,27 +295,27 @@ init_chat_loop(Node, MasterNode, Username, Clock) ->
     end, Node#node.messages),
     User = #user{name = Username, pid = self()},
     WaitPid = self(),
-    _P = spawn(fun() -> write_mess(Node, MasterNode, User, Clock, WaitPid) end),
-    _P1 = spawn(fun() -> print_messages(WaitPid) end),
+    _P = spawn_link(fun() -> write_mess(Node, MasterPid, User, Clock, WaitPid) end),
+    _P1 = spawn_link(fun() -> print_messages(WaitPid) end),
     wait_mess(Clock, Node).
 
 %% @doc The loop run such that the user can write messages in a groupchat.
 %% @param Node is the connected group-node.
-%% @param MasterNode is a node in the ring.
+%% @param MasterPid is the pid of a node in the ring.
 %% @param User is the users username and pid.
 %% @param Clock is the internal clock of the UI.
 %% @param WaitPid is the pid of the process handling messages when connected to group.
--spec write_mess(#node{}, #node{}, #user{}, integer(), pid()) -> no_return().
-write_mess(Node, MasterNode, User, Clock, WaitPid)->
+-spec write_mess(#node{}, pid(), #user{}, integer(), pid()) -> no_return().
+write_mess(Node, MasterPid, User, Clock, WaitPid)->
     Message = string:trim(io:get_line(": ")),
-    case string:equal(Message, "quit\n") of
-        true -> loop(MasterNode, Clock);
+    case string:equal(Message, "quit") of
+        true -> loop(MasterPid, Clock);
         _ -> 
             NewClock = Clock + 1,
             WaitPid ! {clock_changed, NewClock},
             M = #message{user = User,text = Message},
             Node#node.pid ! {revise_loop, M, self(), erlang:unique_integer([positive]),Clock},
-            write_mess(Node, MasterNode, User, NewClock,WaitPid)
+            write_mess(Node, MasterPid, User, NewClock,WaitPid)
     end.
 
 %% @doc Gets the messages sent to the groupchat in intervals and prints them (because of total ordering).

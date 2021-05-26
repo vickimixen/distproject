@@ -1,5 +1,5 @@
 -module(chat).
--export([start/2,master_start/0]).
+-export([start/2,start/0,hash/1]).
 -export_type([users/0, messages/0]).
 -export_opaque([key/0, users/0, messages/0, channels/0]).
 
@@ -113,9 +113,9 @@ format_node(N) ->
   io_lib:format("("++?KEY_FORMAT++" ~p)",[N#node.key,N#node.pid]).
 
 %% @doc Returns the node which is the masternode.
--spec master_start() -> #node{}.
-master_start() ->
-  Node = start().
+%-spec master_start() -> #node{}.
+%master_start() ->
+%  Node = start().
 
 %% @doc Creates a new ring.
 -spec start() -> #node{}.
@@ -125,7 +125,8 @@ start() ->
     spawn_link( fun() -> stabilise(Self,Self,[Self]) end),
     loop(#state{ self = Self, successor = Self })
   end),
-  #node{ key = hash(P) , pid = P, name = "startNode" }.
+  %#node{ key = hash(P) , pid = P, name = "startNode" }.
+  {node(),pid_to_list(P)}.
 
 %% @doc Joins an existing ring.
 %% @param N is a node in a existing ring.
@@ -252,9 +253,9 @@ loop(S) ->
       end,
       ReplyTo ! { set, NewSuccessors },
       loop(S#state{successors = NewSuccessors});
-    { get_name, ReplyTo, Startnode } ->
+    { get_name, ReplyTo, StartPid } ->
       % Gets the name of the groupchat (the node) and then sends the request to its successor
-      case Startnode#node.pid == S#state.successor#node.pid of  % unless it as reached where it started in the ring 
+      case StartPid == S#state.successor#node.pid of  % unless it as reached where it started in the ring 
         true -> 
           ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
           timer:sleep(?TIMEOUT),
@@ -262,7 +263,7 @@ loop(S) ->
           loop(S); 
         _ -> 
           ReplyTo ! {return_name, S#state.self#node.name, S#state.self},
-          S#state.successor#node.pid ! {get_name, ReplyTo, Startnode},
+          S#state.successor#node.pid ! {get_name, ReplyTo, StartPid},
           loop(S)
       end;
     { user_joined, Username, Pid } ->
@@ -282,7 +283,7 @@ loop(S) ->
       Max = case length(TimestampList) of 
         0 -> 0;
         1 -> lists:nth(1, TimestampList);
-        _ -> lists:max(get_timestamp([], S#state.self#node.users))
+        _ -> lists:max(TimestampList)
       end,
       lists:foreach(fun(U) ->
         U#user.pid ! {final_ts, ReplyTo, Tag, Max}
@@ -298,16 +299,16 @@ loop(S) ->
       NewMessages = lists:sublist(SortedLargeMess, 1, 10),
       Sortedsmall = lists:sort(fun(X, Y) -> X#q_entry.timestamp < Y#q_entry.timestamp end, NewMessages),
       loop(S#state{self = S#state.self#node{messages = Sortedsmall} });        
-    { find_user, Name, ReplyTo, Startnode } ->
+    { find_user, Name, ReplyTo, StartPid } ->
       % Gets the user which has Name as its name
-      case Startnode#node.pid == S#state.successor#node.pid of
+      case StartPid == S#state.successor#node.pid of
         true ->
           ReplyTo ! {return_users, find_user(S#state.self, Name)},
           ReplyTo ! {done},
           loop(S);
         _ ->
           ReplyTo ! {return_users, find_user(S#state.self, Name)},
-          S#state.successor#node.pid ! {find_user, Name, ReplyTo, Startnode},
+          S#state.successor#node.pid ! {find_user, Name, ReplyTo, StartPid},
           loop(S)
       end;
     print_info ->
