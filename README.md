@@ -21,7 +21,7 @@ The terminal will print something like this:
 ## else:  
 > ui:join({'2@LAPTOP-91UN0LD8',"<0.86.0>"}).
 
-## After the last commands the UI runs, there are 6 possibilies:
+## After the last commands the UI runs, there are 6 possibilities:
 
 1: List groups   
 2: Search group  
