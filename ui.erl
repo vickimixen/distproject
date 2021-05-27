@@ -113,7 +113,7 @@ group_loop(MasterPid, Clock) ->
     MasterPid ! { get_name, self(), MasterPid},
     Groups = list_groups(maps:new()), %Function that gets all the groups in the ring
     io:format("Here are the different groups avaliable~n"),
-    case maps:size(Groups) == 1 of  % Check to see if any groups was return
+    case maps:size(Groups) == 1 of  % Check to see if any groups were returned, if ==1 only masternode in the ring
         true -> 
             io:format("No groups made ~n"),
             loop(MasterPid, Clock);
@@ -128,7 +128,7 @@ group_loop(MasterPid, Clock) ->
     end,
     Term = io:get_line("Which one would you like to join? (Write \"back\" to return to start) "),
     Group = string:trim(Term),
-    case string:equal(Group, "back") of % Checks if the user want to go back to the start screen
+    case string:equal(Group, "back") of % Checks if the user wants to go back to the start screen
         true -> 
             io:format("Going back to start~n"),
             loop(MasterPid, Clock);
@@ -141,7 +141,7 @@ group_loop(MasterPid, Clock) ->
                 _ ->
                     Answer = string:trim(io:get_line("Do you want to see the users in the group? (Yes/No) ")),
                     case Answer of 
-                        "Yes" -> get_group_users(JoinedChannel); % Gets the users in the speficied group and prints if any
+                        "Yes" -> get_group_users(JoinedChannel); % Gets the users in the specified group and prints if any
                         "No" -> ok;
                         _ -> io:format("bad input") % input error
                     end,
@@ -164,7 +164,7 @@ list_groups(Groups) ->
           NewGroups = maps:put(Name,Node,Groups), % adds to its list if not 
           list_groups(NewGroups)
         end;
-    {done} -> % is recieved when the message has been sent through the ring
+    {done} -> % is received when the message has been sent through the ring
       Groups
   end.
 
@@ -207,8 +207,8 @@ group_search_loop(MasterPid, Clock) ->
     end,
     MasterPid ! { get_name, self(), MasterPid}, % tells the ring to go through the ring at get names
     Groups = list_groups(maps:new()), % collects the names
-    Node = look_up(Groups, Group), % finds the name seached for in the map
-    case Node of % checks if the node search was not in list
+    Node = look_up(Groups, Group), % finds the name searched for in the map
+    case Node of % checks if the node searched for was not in list
         undefined ->
             io:format("Group not found ~n"),
             group_search_loop(MasterPid, Clock);
@@ -233,11 +233,11 @@ group_found_loop(MasterPid, Node, Group, Clock) ->
         "Yes\n" -> 
             Username = string:trim(io:get_line("Please choose a username: ")),
             io:format("Connecting you to: ~p with the name: ~p~n", [Group, Username]),
-            Node#node.pid ! {user_joined, Username, self()}, % tells the group a users has connected to it
+            Node#node.pid ! {user_joined, Username, self()}, % tells the group a user has connected to it
             init_chat_loop(Node, MasterPid, Username, Clock); % enters the chat loop
         "No\n" ->  
             loop(MasterPid, Clock);
-        _ -> % triggered when users wrote something other than specified.
+        _ -> % triggered when user wrote something other than specified.
             io:format("Option not avaliable"),
             group_found_loop(MasterPid, Node, Group, Clock)
     end.
@@ -248,7 +248,7 @@ group_found_loop(MasterPid, Node, Group, Clock) ->
 -spec user_loop(pid(), integer()) -> no_return().
 user_loop(MasterPid, Clock) ->
     Name = string:trim(io:get_line("What name would like to search for? ")),
-    MasterPid ! { find_user, Name, self(), MasterPid}, % tells the ring to send back it users with the searched name
+    MasterPid ! { find_user, Name, self(), MasterPid}, % tells the ring to send back its users with the searched name
     Users = list_users([]), % collects the users
     io:format("Users found with the name: ~n"),
     case length(Users) == 0 of % checks if users with searched name was found
@@ -269,7 +269,7 @@ user_loop(MasterPid, Clock) ->
 -spec list_users(list()) -> list().
 list_users(Users) ->
     receive
-        {return_users, Result} -> % result is a tuple contaning group name and user's name
+        {return_users, Result} -> % result is a tuple containing group name and user's name
             case Result /= undefined of % result is undefined if no user found in the group with that name
                 true ->
                     NewUsers = lists:append(Users, [Result]), % adds tuple to list
@@ -297,7 +297,7 @@ init_chat_loop(Node, MasterPid, Username, Clock) ->
     User = #user{name = Username, pid = self()}, % create the user record
     WaitPid = self(),
     _P = spawn_link(fun() -> write_mess(Node, MasterPid, User, Clock, WaitPid) end), % new process for writing messages
-    _P1 = spawn_link(fun() -> print_messages(WaitPid) end), % new process for periodecally printing messages
+    _P1 = spawn_link(fun() -> print_messages(WaitPid) end), % new process for periodically printing messages
     wait_mess(Clock, Node).
 
 %% @doc The loop run such that the user can write messages in a groupchat.
@@ -313,7 +313,7 @@ write_mess(Node, MasterPid, User, Clock, WaitPid)->
         true -> loop(MasterPid, Clock);
         _ -> 
             NewClock = Clock + 1, % increment the local clock
-            WaitPid ! {clock_changed, NewClock}, % tells the loop handling messages to increment is clock also
+            WaitPid ! {clock_changed, NewClock}, % tells the loop handling messages to increment its clock as well
             M = #message{user = User,text = Message}, % make message record
             Node#node.pid ! {revise_loop, M, self(), erlang:unique_integer([positive]),Clock}, % tell ring to start total ordering algorithm 
             write_mess(Node, MasterPid, User, NewClock,WaitPid)
@@ -328,7 +328,7 @@ print_messages(WaitPid) ->
     MessageList = receive
         {return_deliv, Deliv_q} -> Deliv_q
     end,
-    case length(MessageList) of % checks if there is any messages
+    case length(MessageList) of % checks if there are any messages
         0 -> print_messages(WaitPid);
         _ ->
             lists:foreach(fun(M) -> % prints the messages
@@ -344,7 +344,7 @@ print_messages(WaitPid) ->
 wait_mess(Clock, Node) ->
     receive
         {get_deliv, ReplyTo} -> 
-            % return the delivery queue, which is the messages with a final timestamp
+            % return the delivery queue, which contains the messages with a final timestamp
             ReplyTo ! {return_deliv, Node#node.deliv_q}, % send them to the process asking
             Node#node.pid ! {final_messages, Node#node.deliv_q}, % tell group to update its message history
             wait_mess(Clock, Node#node{deliv_q = []}); % empty deliv_q to not print same messages multiple times
@@ -352,13 +352,13 @@ wait_mess(Clock, Node) ->
             % tells the UI to send back what it means the largest timestamp is
             MaxClock = max(Clock, NewClock), 
             NewTemp = lists:append(Node#node.temp_q, #q_entry{m = Message, tag = Tag, timestamp = MaxClock, deliverable = false}), % creates q_entry
-            Node#node.pid ! {proposed_ts, self(), Tag, MaxClock}, % sends back what it think the messages timestamp should be
+            Node#node.pid ! {proposed_ts, self(), Tag, MaxClock}, % sends back what it thinks the messages timestamp should be
             wait_mess(Clock, Node#node{temp_q = NewTemp}); % adds the message to its temp_q 
         {clock_changed, ChangedClock} -> 
             % update the clock
             wait_mess(ChangedClock, Node);
         {final_ts, _ReplyTo, Tag, Max} -> 
-            % the timestamp of a message has been descided
+            % the timestamp of a message has been decided
             RecList = [X || X <- [Node#node.temp_q], X#q_entry.tag == Tag], % finds the q_entry with the Tag of the message
             NewRec = lists:nth(1, RecList), % there should only be one in the list because tag is unique
             UpdatedRec = NewRec#q_entry{deliverable = true, timestamp = Max}, % update the deliverable and the timestamp 
@@ -367,9 +367,9 @@ wait_mess(Clock, Node) ->
             FirstEl = lists:nth(1, SortedTemp), % take first element  
             case FirstEl#q_entry.tag == Tag of % checks if the first element has the right tag
                 true -> 
-                    DelEntry = lists:takewhile(fun(Q) -> Q#q_entry.deliverable == true end, SortedTemp), % get all q_entrys that have their deliverable to true
+                    DelEntry = lists:takewhile(fun(Q) -> Q#q_entry.deliverable == true end, SortedTemp), % get all q_entries that have their deliverable to true
                     N2 = Node#node{deliv_q = lists:append(Node#node.deliv_q, DelEntry)}, % get new node with updated deliv_q
-                    NewSortedTemp = lists:nthtail(length(DelEntry), SortedTemp), % get the part of the sorted list that had not deliverable to true
+                    NewSortedTemp = lists:nthtail(length(DelEntry), SortedTemp), % get the part of the sorted list that did not have deliverable set to true
                     NewNode = N2#node{temp_q = NewSortedTemp}; % create new node with new temp_q
                 _ -> NewNode = Node
             end,
