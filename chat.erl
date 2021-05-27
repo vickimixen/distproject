@@ -117,12 +117,12 @@ format_node(N) ->
 %% @see start/0
 -spec start() -> #node{}.
 start() ->
-  P = spawn(fun() -> % starts up a node in the created ring and the stabilising of the node
+  P = spawn(fun() -> % starts up a node in the created ring and the stabiliser of the node
     Self = #node{ key = hash(self()) , pid = self(), name = "startNode" },
     spawn_link( fun() -> stabilise(Self,Self,[Self]) end),
     loop(#state{ self = Self, successor = Self })
   end),
-  {node(),pid_to_list(P)}. % return information for erlang node and the pid
+  {node(),pid_to_list(P)}. % returns information for erlang node and the pid
 
 %% @doc Joins an existing ring.
 %% @see start/2
@@ -130,7 +130,7 @@ start() ->
 %% @param Name is the name of the group node joining the ring.
 -spec start(#node{}, string()) -> #node{}.
 start(N, Name) ->
-  P = spawn(fun() -> % gets belived successor and start stabilising for node
+  P = spawn(fun() -> % gets believed successor and start stabilising for node
     Succ = locate_successor(hash(self()), N),
     Self = #node{ key = hash(self()) , pid = self(), name = Name },
     % NOTE: collisions for hash(self()) are not a problem for the protocol.
@@ -161,7 +161,7 @@ locate_successor(Key, N) ->
 -spec stabilise(#node{},#node{}, list()) -> no_return().
 stabilise(Self,Successor,Successors) ->
   timer:sleep(?STABILIZE_INTERVAL),
-  Successor#node.pid ! { get_predecessor, self() }, % ask belived successor for its predecessor
+  Successor#node.pid ! { get_predecessor, self() }, % ask believed successor for its predecessor
   NewSuccessor = receive
     { predecessor_of, Successor, undefined } -> Successor;
     { predecessor_of, Successor, X } -> 
@@ -172,7 +172,7 @@ stabilise(Self,Successor,Successors) ->
         _ ->
           Successor
       end
-  after ?TIMEOUT -> % triggered if successor have not answered for some time
+  after ?TIMEOUT -> % triggered if successor has not answered for some time
     lists:foreach(fun(N) -> % tell the nodes in the successor list to remove the node not responding in their succ list
       N#node.pid ! { remove_node, Successor}
     end, Successors),
@@ -252,14 +252,14 @@ loop(S) ->
         true -> lists:append([FromNode], lists:droplast(Successors));
         _    -> lists:append([FromNode], Successors)
       end,
-      ReplyTo ! { set, NewSuccessors }, % sends the new list of successors to the stabalise process
+      ReplyTo ! { set, NewSuccessors }, % sends the new list of successors to the stabilise process
       loop(S#state{successors = NewSuccessors});
     { get_name, ReplyTo, StartPid } ->
       % Gets the name of the groupchat (the node) and then sends the request to its successor
-      case StartPid == S#state.successor#node.pid of  % unless it as reached where it started in the ring 
+      case StartPid == S#state.successor#node.pid of  % unless it has reached where it started in the ring
         true -> 
           ReplyTo ! {return_name, S#state.self#node.name, S#state.self}, % sends the name to the UI
-          timer:sleep(?TIMEOUT), % makes sure to give the processes some time to all respond
+          timer:sleep(?TIMEOUT), % makes sure to give the processes some time for all to respond
           ReplyTo ! {done}, % have been around the ring, tells so to the UI
           loop(S); 
         _ -> 
@@ -268,9 +268,9 @@ loop(S) ->
           loop(S)
       end;
     { user_joined, Username, Pid } ->
-      % A users as joined the groupchat
+      % A user has joined the groupchat
       User = #user{name = Username, pid = Pid},
-      loop(S#state{self = S#state.self#node{users = lists:append(S#state.self#node.users, [User])}}); % adds users record to users list
+      loop(S#state{self = S#state.self#node{users = lists:append(S#state.self#node.users, [User])}}); % adds user's record to user list users
     { group_users, ReplyTo } ->
       % Request for the groupchat's (the node's) list of users
       ReplyTo ! {return_group_users, S#state.self#node.users},
@@ -296,18 +296,18 @@ loop(S) ->
       loop(S#state { successors = lists:dropwhile(fun(MyNode) -> MyNode == Node end, S#state.successors) });
     { final_messages, Deliv_q } ->
       % Gets messages to add to message history, sorted list of messages based on timestamp
-      % first messages are sorted such that the larges timestamp is in the begining
+      % first messages are sorted such that the larges timestamp is in the beginning
       SortedLargeMess = lists:sort(fun(X, Y) -> X#q_entry.timestamp > Y#q_entry.timestamp end, lists:umerge(S#state.self#node.messages, Deliv_q)),
       NewMessages = lists:sublist(SortedLargeMess, 1, 10), % bounds the messages, and removes the ones with smaller timestamps
       Sortedsmall = lists:sort(fun(X, Y) -> X#q_entry.timestamp < Y#q_entry.timestamp end, NewMessages), % sorts such smaller timestamps is in the beginning (right print order)
       loop(S#state{self = S#state.self#node{messages = Sortedsmall} }); % update message history       
     { find_user, Name, ReplyTo, StartPid } ->
       % Gets the user which has Name as its name
-      case StartPid == S#state.successor#node.pid of % checks if it is where it began
+      case StartPid == S#state.successor#node.pid of % checks if it is where it began in the ring
         true ->
-          ReplyTo ! {return_users, find_user(S#state.self, Name)}, % sends the user with the search name
+          ReplyTo ! {return_users, find_user(S#state.self, Name)}, % sends the user with the searched name
           timer:sleep(?TIMEOUT), % makes sure to give the processes some time to all respond
-          ReplyTo ! {done}, % tells that it has been through the ring
+          ReplyTo ! {done}, % tells UI that it has been through the ring
           loop(S);
         _ ->
           ReplyTo ! {return_users, find_user(S#state.self, Name)}, % sends the user with the search name
@@ -326,7 +326,7 @@ loop(S) ->
 -spec find_user(#node{}, string()) -> tuple().
 find_user(Node, Name) ->
   Users = Node#node.users,
-  case length([X || X <- Users, string:equal(X#user.name, Name)]) > 0 of % finds the elements in the users list that match the username seached for
+  case length([X || X <- Users, string:equal(X#user.name, Name)]) > 0 of % finds the elements in the users list that match the username searched for
     true -> {Node#node.name, Name}; % only one returned because will all be the same (no knowledge of pid)
     _ -> undefined
   end.
@@ -337,8 +337,8 @@ find_user(Node, Name) ->
 -spec get_timestamp(list(),list()) -> list().
 get_timestamp(List, Users) ->
   receive
-    { proposed_ts, _ReplyTo, _Tag, Timestamp } -> % the timestamp the user think is right
-      case length(List) >= length(Users) of % checks if all users as answered 
+    { proposed_ts, _ReplyTo, _Tag, Timestamp } -> % the timestamp the user thinks is right
+      case length(List) >= length(Users) of % checks if all users have answered
         true -> List; % if yes return list
         _ -> get_timestamp(lists:append(List, [Timestamp]), Users) % if no run function again with the timestamp added to the list
       end
